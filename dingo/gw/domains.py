@@ -599,7 +599,7 @@ def build_domain(settings: Dict) -> Domain:
     elif settings["type"] == ["TimeDomain", "TD"]:
         return TimeDomain(**kwargs)
     else:
-        raise NotImplementedError(f'Domain {settings["name"]} not implemented.')
+        raise NotImplementedError(f'Domain {settings["type"]} not implemented.')
 
 
 def build_domain_from_model_metadata(model_metadata) -> Domain:
