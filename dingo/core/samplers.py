@@ -474,7 +474,6 @@ class GNPESampler(Sampler):
             "parameters": {},
         }
         for i in range(self.num_iterations):
-            print(i)
             x["extrinsic_parameters"] = {
                 k: x["extrinsic_parameters"][k] for k in self.gnpe_parameters
             }

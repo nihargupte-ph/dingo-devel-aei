@@ -131,6 +131,10 @@ class WaveformGenerator:
         parameters = parameters.copy()
         parameters["f_ref"] = self.f_ref
 
+        # If the model is SEOBNRv4HM_PA we need to add non-gr parameters to lal dicts
+        if self.approximant_str == "SEOBNRv4HM_PA":
+            self.lal_params = SEOBNRv4HM_qnm_lal_dict(parameters)
+
         # Convert to lalsimulation parameters according to the specified domain
         parameters_lal = self._convert_parameters_to_lal_frame(
             parameters, self.lal_params
@@ -158,8 +162,6 @@ class WaveformGenerator:
                     )
                     pol_nan = np.ones(len(self.domain)) * np.nan
                     wf_dict = {"h_plus": pol_nan, "h_cross": pol_nan}
-                else:
-                    raise
 
         if self.transform is not None:
             return self.transform(wf_dict)
@@ -285,7 +287,7 @@ class WaveformGenerator:
             LS.SimInspiralModeArrayActivateMode(ma, ell, m)
             LS.SimInspiralModeArrayActivateMode(ma, ell, -m)
         LS.SimInspiralWaveformParamsInsertModeArray(lal_params, ma)
-        return lal_params
+        return lal_params      
 
     def generate_FD_waveform(self, parameters_lal: Tuple) -> Dict[str, np.ndarray]:
         """
@@ -408,6 +410,43 @@ class WaveformGenerator:
         pol_dict = {"h_plus": h_plus, "h_cross": h_cross}
         return pol_dict
 
+
+def SEOBNRv4HM_qnm_lal_dict(parameters):
+    """Define a quasinormal mode array to add quasinormal modes to the
+    waveform generator
+
+    Parameters
+    ----------
+    qnm_list : a list of (ell, m, n) modes
+
+    Returns
+    -------
+    lal_params:
+        A lal parameter dictionary
+    """
+    lal_params = lal.CreateDict()
+    if "domega210" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDOmega210(lal_params, parameters["domega210"])
+    if "domega220" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDOmega220(lal_params, parameters["domega220"])
+    if "domega330" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDOmega330(lal_params, parameters["domega330"])
+    if "domega440" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDOmega440(lal_params, parameters["domega440"])
+    if "domega550" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDOmega550(lal_params, parameters["domega550"])
+    if "dtau210" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDTau210(lal_params, parameters["dtau210"])
+    if "dtau220" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDTau220(lal_params, parameters["dtau220"])
+    if "dtau330" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDTau330(lal_params, parameters["dtau330"])
+    if "dtau440" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDTau440(lal_params, parameters["dtau440"])
+    if "dtau550" in parameters.keys():
+        LS.SimInspiralWaveformParamsInsertDTau550(lal_params, parameters["dtau550"])
+    
+    return lal_params
 
 def SEOBNRv4PHM_maximum_starting_frequency(
     total_mass: float, fudge: float = 0.99

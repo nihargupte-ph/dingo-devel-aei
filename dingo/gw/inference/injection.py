@@ -204,7 +204,7 @@ class Injection(GWSignal):
         self.prior = prior
 
     @classmethod
-    def from_posterior_model(cls, pm):
+    def from_posterior_model_metadata(cls, metadata):
         """
         Instantiate an Injection based on a posterior model. The prior, waveform
         settings, etc., will all be consistent with what the model was trained with.
@@ -213,7 +213,6 @@ class Injection(GWSignal):
         ----------
         pm : PosteriorModel
         """
-        metadata = pm.metadata
         intrinsic_prior = metadata["dataset_settings"]["intrinsic_prior"]
         extrinsic_prior = get_extrinsic_prior_dict(
             metadata["train_settings"]["data"]["extrinsic_prior"]
@@ -222,11 +221,11 @@ class Injection(GWSignal):
 
         return cls(
             prior=prior,
-            wfg_kwargs=pm.metadata["dataset_settings"]["waveform_generator"],
-            wfg_domain=build_domain(pm.metadata["dataset_settings"]["domain"]),
-            data_domain=build_domain_from_model_metadata(pm.metadata),
-            ifo_list=pm.metadata["train_settings"]["data"]["detectors"],
-            t_ref=pm.metadata["train_settings"]["data"]["ref_time"],
+            wfg_kwargs=metadata["dataset_settings"]["waveform_generator"],
+            wfg_domain=build_domain(metadata["dataset_settings"]["domain"]),
+            data_domain=build_domain_from_model_metadata(metadata),
+            ifo_list=metadata["train_settings"]["data"]["detectors"],
+            t_ref=metadata["train_settings"]["data"]["ref_time"],
         )
 
     def injection(self, theta):

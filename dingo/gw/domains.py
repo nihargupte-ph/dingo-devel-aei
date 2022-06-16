@@ -596,7 +596,7 @@ def build_domain(settings: Dict) -> Domain:
     kwargs = {k: v for k, v in settings.items() if k != "type"}
     if settings["type"] in ["FrequencyDomain", "FD"]:
         return FrequencyDomain(**kwargs)
-    elif settings["type"] == ["TimeDomain", "TD"]:
+    elif settings["type"] in ["TimeDomain", "TD"]:
         return TimeDomain(**kwargs)
     else:
         raise NotImplementedError(f'Domain {settings["type"]} not implemented.')

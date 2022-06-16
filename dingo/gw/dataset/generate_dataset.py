@@ -56,6 +56,9 @@ def generate_parameters_and_polarizations(
     wf_failed = np.any(np.isnan(polarizations["h_plus"]), axis=1)
     if wf_failed.any():
         idx_failed = np.where(wf_failed)[0]
+        import pickle
+        with open("/home/local/nihargupte/dingo-devel/tutorials/06_tgr/dumps/failed_wfs.pkl", "wb") as f:
+            pickle.dump(parameters.iloc[idx_failed], f)
         idx_ok = np.where(~wf_failed)[0]
         polarizations_ok = {k: v[idx_ok] for k, v in polarizations.items()}
         parameters_ok = parameters.iloc[idx_ok]
