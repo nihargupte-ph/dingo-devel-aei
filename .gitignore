@@ -144,3 +144,13 @@ dmypy.json
 
 # directories with temporary files
 **/tmp_files/*
+
+*.out
+*.pkl
+*.pt
+*.png
+*.pdf
+*.pickle
+*.json
+*.jpg
+tutorials/03_aligned_spin

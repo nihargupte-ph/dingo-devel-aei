@@ -1,0 +1,99 @@
+data:
+  context_parameters:
+  - L1_time_proxy
+  detectors:
+  - H1
+  - L1
+  domain_update:
+    f_max: 2048
+    f_min: 20
+  extrinsic_prior:
+    dec: default
+    geocent_time: bilby.core.prior.Uniform(minimum=-0.10, maximum=0.10)
+    luminosity_distance: bilby.core.prior.Uniform(minimum=25.0, maximum=1000.0)
+    psi: default
+    ra: default
+  gnpe_time_shifts:
+    exact_equiv: true
+    kernel: bilby.core.prior.Uniform(minimum=-0.001, maximum=0.001)
+  inference_parameters:
+  - chirp_mass
+  - mass_ratio
+  - phase
+  - chi_1
+  - chi_2
+  - theta_jn
+  - dec
+  - ra
+  - geocent_time
+  - luminosity_distance
+  - psi
+  - domega220
+  - dtau220
+  ref_time: 1126259462.391
+  train_fraction: 0.95
+  waveform_dataset_path: /data/nihargupte/datasets/waveforms/aligned_spin_SEOBNRv4HM_PA_2048.hdf5
+  window:
+    T: 8.0
+    f_s: 4096
+    roll_off: 0.4
+    type: tukey
+model:
+  embedding_net_kwargs:
+    added_context: true
+    batch_norm: true
+    dropout: 0.0
+    hidden_dims: [1024, 1024, 1024, 1024, 1024, 1024, 
+    512, 512, 512, 512, 512, 512,
+    256, 256, 256, 256, 256, 256,
+    128, 128, 128, 128, 128, 128
+    ]
+    output_dim: 128
+    svd:
+      num_training_samples: 50000
+      num_validation_samples: 5000
+      size: 200
+  nsf_kwargs:
+    base_transform_kwargs:
+      activation: elu
+      base_transform_type: rq-coupling
+      batch_norm: true
+      dropout_probability: 0.0
+      hidden_dim: 1024
+      num_bins: 8
+      num_transform_blocks: 5
+    context_dim: 129
+    input_dim: 11
+    num_flow_steps: 30
+  type: nsf+embedding
+training:
+  stage_0:
+    asd_dataset_path: /home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/datasets/ASDs_new/1024_1/asds_O1.hdf5
+    batch_size: 4096
+    epochs: 300
+    freeze_rb_layer: true
+    optimizer:
+      lr: 5.0e-5
+      type: adam
+    scheduler:
+      factor: 0.5
+      type: reduce_on_plateau
+  stage_1:
+    asd_dataset_path: /home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/datasets/ASDs_new/1024_10/asds_O1.hdf5
+    batch_size: 4096
+    epochs: 150
+    freeze_rb_layer: false
+    optimizer:
+      lr: 1.0e-05
+      type: adam
+    scheduler:
+      factor: 0.5
+      type: reduce_on_plateau
+
+local:
+  device: cuda
+  num_workers: 32
+  checkpoint_epochs: 450
+  runtime_limits:
+    max_time_per_run: 1000000
+    max_epochs_per_run: 450
