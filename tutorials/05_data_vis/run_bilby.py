@@ -18,6 +18,8 @@ import setproctitle
 import pandas as pd
 from threadpoolctl import threadpool_limits
 from pprint import pprint
+from bilby.gw.detector import PowerSpectralDensity
+from bilby.gw.detector import InterferometerList
 
 matplotlib.use("pdf")
 
@@ -30,6 +32,7 @@ from dingo.gw.domains import build_domain, build_domain_from_model_metadata
 import dingo.gw.inference
 from dingo.gw.transforms import *
 from dingo.gw.gwutils import get_window_factor
+from dingo.gw.inference import injection
 from dingo.core.models import PosteriorModel
 
 
@@ -37,17 +40,12 @@ from dingo.core.models import PosteriorModel
 setproctitle.setproctitle(f"bilby_dingo")
 approximant = "SEOBNRv4HM_ROM"
 special = "_O1_2048_lr"
-save_idx = 2
+save_idx = 3
 models_dir = "/home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin"
 train_dir = models_dir + f"/train_dir_{approximant}{special}"
 save_dir = f"{approximant}{special}_comparison/{save_idx}"
-waveform_generation_dir = (
-    "/home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/datasets/waveforms"
-)
 os.makedirs(save_dir, exist_ok=True)
-os.environ[
-    "LAL_DATA_PATH"
-] = "/home/local/nihargupte/dingo-devel/venv/lib/python3.9/site-packages/lalsimulation/"
+os.environ["LAL_DATA_PATH"] = "/home/local/nihargupte/dingo-devel/venv/lib/python3.9/site-packages/lalsimulation/"
 
 torch.cuda.set_device(4)
 if not os.path.exists(train_dir + "/metadata.yaml"):
@@ -64,7 +62,7 @@ if not os.path.exists(train_dir + "/metadata.yaml"):
 with open(train_dir + "/metadata.yaml", "r") as f:
     metadata = yaml.safe_load(f)
 
-from dingo.gw.inference import injection
+
 
 injection_generator = injection.Injection.from_posterior_model_metadata(metadata)
 
@@ -94,17 +92,11 @@ extrinsic_parameters = {
     "luminosity_distance": 410,  # Mpc
 }
 theta = {**intrinsic_parameters, **extrinsic_parameters}
-chirp_mass = bilby.gw.conversion.component_masses_to_chirp_mass(
-    theta["mass_1"], theta["mass_2"]
-)
-mass_ratio = bilby.gw.conversion.component_masses_to_mass_ratio(
-    theta["mass_1"], theta["mass_2"]
-)
+chirp_mass = bilby.gw.conversion.component_masses_to_chirp_mass(theta["mass_1"], theta["mass_2"])
+mass_ratio = bilby.gw.conversion.component_masses_to_mass_ratio(theta["mass_1"], theta["mass_2"])
 theta["mass_ratio"] = mass_ratio
 theta["chirp_mass"] = chirp_mass
 
-np.random.seed(43)
-torch.manual_seed(43)
 domain = build_domain_from_model_metadata(metadata)
 torch.cuda.empty_cache()
 print(torch.cuda.memory_allocated())
@@ -115,13 +107,6 @@ with open(save_dir + "/strain_data.pkl", "wb") as f:
     pickle.dump(strain_data, f)
 
 # In[8]:
-from bilby.gw.detector import PowerSpectralDensity
-from bilby.gw.detector import InterferometerList
-
-os.environ[
-    "LAL_DATA_PATH"
-] = "/home/local/nihargupte/dingo-devel/venv/lib/python3.9/site-packages/lalsimulation/"
-
 ifo_strs = ["H1", "L1"]
 ifos = InterferometerList(ifo_strs)
 for ifo in ifos:
@@ -143,24 +128,17 @@ for ifo in ifos:
 # Setting the Priors
 priors = injection_generator.prior
 
-priors["geocent_time"].minimum = strain_data["parameters"]["geocent_time"] - 0.1
-priors["geocent_time"].maximum = strain_data["parameters"]["geocent_time"] + 0.1
+priors["geocent_time"].minimum = metadata["train_settings"]["data"]["ref_time"] - 0.1
+priors["geocent_time"].maximum = metadata["train_settings"]["data"]["ref_time"] + 0.1
 
 # Making sure that the injection lies within the prior (particuarly for the mass)
-assert (
-    priors["mass_ratio"].minimum < theta["mass_ratio"]
-    and theta["mass_ratio"] < priors["mass_ratio"].maximum
-)
-assert (
-    priors["chirp_mass"].minimum < theta["chirp_mass"]
-    and theta["chirp_mass"] < priors["chirp_mass"].maximum
-)
+assert (priors["mass_ratio"].minimum < theta["mass_ratio"]and theta["mass_ratio"] < priors["mass_ratio"].maximum)
+assert (priors["chirp_mass"].minimum < theta["chirp_mass"]and theta["chirp_mass"] < priors["chirp_mass"].maximum)
 
 # Specify the output directory and the name of the simulation.
 outdir = f"{save_dir}/outdir"
 bilby.core.utils.setup_logger(outdir=outdir, label=approximant)
 
-# NOTE Pass reference time to Bilby
 # Creating the Waveform Generator
 # specify waveform arguments
 waveform_arguments = dict(
@@ -168,7 +146,7 @@ waveform_arguments = dict(
     reference_frequency=20.0,  # gravitational waveform reference frequency (Hz)
 )
 time_duration = 8.0  # time duration (seconds)
-sampling_frequency = 8192.0  # sampling frequency (Hz)
+sampling_frequency = 8192.0  # sampling frequency (Hz) NOTE set to 4096.0 if f_max=1024.0
 
 waveform_generator = bilby.gw.waveform_generator.WaveformGenerator(
     sampling_frequency=sampling_frequency,
@@ -191,7 +169,7 @@ result = bilby.run_sampler(
     priors,
     sampler="dynesty",
     nlive=2000,
-    nact=15,
+    nact=50,
     n_check_point=10000,
     outdir=outdir,
     npool=32,
