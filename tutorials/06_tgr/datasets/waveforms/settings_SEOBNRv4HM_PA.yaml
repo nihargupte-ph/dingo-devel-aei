@@ -12,15 +12,15 @@ domain:
 intrinsic_prior:
   chi_1: bilby.gw.prior.AlignedSpin(name='chi_1', a_prior=Uniform(minimum=0, maximum=1.0))
   chi_2: bilby.gw.prior.AlignedSpin(name='chi_2', a_prior=Uniform(minimum=0, maximum=1.0))
-  chirp_mass: bilby.gw.prior.UniformInComponentsChirpMass(minimum=15.0, maximum=100.0)
+  chirp_mass: bilby.gw.prior.UniformInComponentsChirpMass(minimum=10.0, maximum=50.0)
   geocent_time: 0.0
   luminosity_distance: 100.0
-  domega220: bilby.gw.prior.Uniform(minimum=-1.0, maximum=1.0)
-  dtau220: bilby.gw.prior.Uniform(minimum=-1.0, maximum=1.0)
+  domega220: bilby.gw.prior.Uniform(minimum=-0.8, maximum=2.0)
+  dtau220: bilby.gw.prior.Uniform(minimum=-0.8, maximum=2.0)
   mass_ratio: bilby.gw.prior.UniformInComponentsMassRatio(minimum=0.125, maximum=1.0)
   phase: default
   theta_jn: default
-num_samples: 50000
+num_samples: 5000000
 waveform_generator:
   approximant: SEOBNRv4HM_PA
   f_ref: 20.0

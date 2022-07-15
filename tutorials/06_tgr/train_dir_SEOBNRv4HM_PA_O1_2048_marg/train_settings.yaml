@@ -11,9 +11,12 @@ data:
     luminosity_distance: bilby.core.prior.Uniform(minimum=25.0, maximum=1000.0)
     psi: default
     ra: default
+  # gnpe_time_shifts:
+  #   exact_equiv: true
+  #   kernel: bilby.core.prior.Uniform(minimum=-0.001, maximum=0.001)
   inference_parameters:
-  - H1_time
-  - L1_time
+  - domega220
+  - dtau220
   ref_time: 1126259462.391
   train_fraction: 0.95
   waveform_dataset_path: /data/nihargupte/datasets/waveforms/aligned_spin_SEOBNRv4HM_PA_2048.hdf5
@@ -27,7 +30,8 @@ model:
     added_context: true
     batch_norm: true
     dropout: 0.0
-    hidden_dims: [512, 512, 512, 512, 512, 512,
+    hidden_dims: [1024, 1024, 1024, 1024, 1024, 1024, 
+    512, 512, 512, 512, 512, 512,
     256, 256, 256, 256, 256, 256,
     128, 128, 128, 128, 128, 128
     ]
@@ -42,20 +46,20 @@ model:
       base_transform_type: rq-coupling
       batch_norm: true
       dropout_probability: 0.0
-      hidden_dim: 512
+      hidden_dim: 1024
       num_bins: 8
       num_transform_blocks: 5
     context_dim: 129
-    num_flow_steps: 15
+    num_flow_steps: 30
   type: nsf+embedding
 training:
   stage_0:
     asd_dataset_path: /home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/datasets/ASDs_new/1024_1/asds_O1.hdf5
     batch_size: 4096
-    epochs: 100
+    epochs: 300
     freeze_rb_layer: true
     optimizer:
-      lr: 5.0e-5
+      lr: 1.0e-6
       type: adam
     scheduler:
       factor: 0.5
@@ -63,10 +67,10 @@ training:
   stage_1:
     asd_dataset_path: /home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/datasets/ASDs_new/1024_10/asds_O1.hdf5
     batch_size: 4096
-    epochs: 50
+    epochs: 150
     freeze_rb_layer: false
     optimizer:
-      lr: 1.0e-05
+      lr: 5.0e-7
       type: adam
     scheduler:
       factor: 0.5
@@ -75,7 +79,7 @@ training:
 local:
   device: cuda
   num_workers: 32
-  checkpoint_epochs: 15
+  checkpoint_epochs: 100
   runtime_limits:
     max_time_per_run: 1000000
     max_epochs_per_run: 450

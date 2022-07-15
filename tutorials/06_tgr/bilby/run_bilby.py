@@ -38,14 +38,11 @@ from dingo.core.models import PosteriorModel
 
 # In[5]:
 setproctitle.setproctitle(f"bilby_dingo")
-approximant = "SEOBNRv4HM_ROM"
-special = "_O1_2048_lr"
-save_idx = 3
-models_dir = "/home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin"
-train_dir = models_dir + f"/train_dir_{approximant}{special}"
-save_dir = f"{approximant}{special}_comparison/{save_idx}"
+approximant = "SEOBNRv4HM_PA"
+"/home/local/nihargupte/dingo-devel/tutorials/06_tgr/bilby"
+train_dir = "/home/local/nihargupte/dingo-devel/tutorials/06_tgr/train_dir_SEOBNRv4HM_PA_O1_2048"
+save_dir = f"/home/local/nihargupte/dingo-devel/tutorials/06_tgr/bilby/injection_1"
 os.makedirs(save_dir, exist_ok=True)
-os.environ["LAL_DATA_PATH"] = "/home/local/nihargupte/dingo-devel/venv/lib/python3.9/site-packages/lalsimulation/"
 
 torch.cuda.set_device(4)
 if not os.path.exists(train_dir + "/metadata.yaml"):
@@ -62,8 +59,6 @@ if not os.path.exists(train_dir + "/metadata.yaml"):
 with open(train_dir + "/metadata.yaml", "r") as f:
     metadata = yaml.safe_load(f)
 
-
-
 injection_generator = injection.Injection.from_posterior_model_metadata(metadata)
 
 # Opening up a asd
@@ -76,26 +71,29 @@ injection_generator.whiten = False
 # GW150914 intrinsic mass
 intrinsic_parameters = {
     # intrinsic parameters
-    "mass_1": 40.0,
-    "mass_2": 31.6,
-    "chi_1": 0.3,
-    "chi_2": 0.3,
+    "mass_1": 39.4,
+    "mass_2": 30.9,
+    "chi_1": 0.32,
+    "chi_2": 0.57,
+    "domega220": 0.2,
+    "dtau220": 0.3,
 }
 
 extrinsic_parameters = {
     "phase": 0,  # rad
-    "theta_jn": np.pi/3,  # rad inclination to maximize effect of higher modes
+    "theta_jn": 2.6,  # rad inclination to maximize effect of higher modes
     "psi": 0,  # rad
     "ra": 0,  # rad
     "dec": 0,  # rad
     "geocent_time": 0.0,  # s
-    "luminosity_distance": 410,  # Mpc
+    "luminosity_distance": 390,  # Mpc
 }
 theta = {**intrinsic_parameters, **extrinsic_parameters}
 chirp_mass = bilby.gw.conversion.component_masses_to_chirp_mass(theta["mass_1"], theta["mass_2"])
 mass_ratio = bilby.gw.conversion.component_masses_to_mass_ratio(theta["mass_1"], theta["mass_2"])
 theta["mass_ratio"] = mass_ratio
 theta["chirp_mass"] = chirp_mass
+print(theta)
 
 domain = build_domain_from_model_metadata(metadata)
 torch.cuda.empty_cache()
@@ -165,12 +163,8 @@ likelihood = bilby.gw.likelihood.GravitationalWaveTransient(
 result = bilby.run_sampler(
     likelihood,
     priors,
-    sampler="dynesty",
-    nlive=2000,
-    nact=50,
-    n_check_point=10000,
+    sampler="bilby_mcmc",
+    nsamples=100,
     outdir=outdir,
-    npool=32,
-    conversion_function=bilby.gw.conversion.generate_all_bbh_parameters,
-    plot=False,
-)
+    npool=16,
+    )

@@ -3,11 +3,12 @@ from dingo.gw.training.train_pipeline import *
 import setproctitle
 import torch
 
-torch.cuda.set_device(5)
+torch.cuda.set_device(0)
 setproctitle.setproctitle("dingo_train")
-train_settings_file = "/home/local/nihargupte/dingo-devel/tutorials/06_tgr/train_dir_SEOBNRv4HM_PA_O1_2048/train_settings.yaml"
-train_dir = "/home/local/nihargupte/dingo-devel/tutorials/06_tgr/train_dir_SEOBNRv4HM_PA_O1_2048/"
-# checkpoint = "/home/local/nihargupte/dingo-devel/tutorials/03_aligned_spin/train_dir_SEOBNRv4HM_ROM_O1_2048/model_latest.pt"
+train_dir_name = "train_dir_SEOBNRv4HM_PA_O1_2048_marg_gnpe/"
+train_settings_file = f"/home/local/nihargupte/dingo-devel/tutorials/06_tgr/{train_dir_name}/train_settings.yaml"
+train_dir = f"/home/local/nihargupte/dingo-devel/tutorials/06_tgr/{train_dir_name}/"
+# checkpoint = "/home/local/nihargupte/dingo-devel/tutorials/06_tgr/train_dir_SEOBNRv4HM_PA_O1_2048_marg/model_latest.pt"
 print("Beginning new training run.")
 with open(train_settings_file, "r") as fp:
     train_settings = yaml.safe_load(fp)
