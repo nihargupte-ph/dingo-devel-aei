@@ -105,6 +105,13 @@ def parse_args():
         action="store_true",
         help="If set, log_probs of samples are saved. Will not work for GNPE.",
     )
+    parser.add_argument(
+        "--density_settings",
+        type=str,
+        default=None,
+        help="Path to yaml file with settings for density estimation. Only used if "
+        "log_prob is requested for a gnpe model.",
+    )
 
     args = parser.parse_args()
 
@@ -137,6 +144,7 @@ def analyze_event():
         ref = None
 
     if args.model_init is not None:
+        gnpe = True
         init_model = PosteriorModel(
             args.model_init, device=device, load_training_info=False
         )
@@ -147,6 +155,7 @@ def analyze_event():
             num_iterations=args.num_gnpe_iterations,
         )
     else:
+        gnpe = False
         sampler = GWSampler(model=model)
 
     # sample posterior for events
@@ -167,6 +176,17 @@ def analyze_event():
             "time_psd": args.time_psd,
             "time_buffer": args.time_buffer,
         }
+
+        if gnpe and args.get_log_prob:
+            # GNPE generally does not provide straightforward access to the log_prob.
+            # If requested, need to train an initialization model for the GNPE proxies.
+            with open(args.density_settings) as f:
+                density_settings = yaml.safe_load(f)
+            sampler.prepare_log_prob(
+                batch_size=args.batch_size,
+                **density_settings,
+            )
+
         sampler.run_sampler(
             args.num_samples,
             batch_size=args.batch_size,
@@ -184,7 +204,7 @@ def analyze_event():
             ref_samples_file = ref[time_event]["reference_samples"]["file"]
             ref_method = ref[time_event]["reference_samples"]["method"]
 
-            sampler.to_hdf5(label=name_event, outdir=args.out_directory)
+            sampler.to_hdf5(label=name_event + args.suffix, outdir=args.out_directory)
 
             ref_samples = load_ref_samples(ref_samples_file)
 
