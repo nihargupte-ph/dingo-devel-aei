@@ -88,6 +88,9 @@ def train_unconditional_density_estimator(
     # Store context to keep a record, even though it will not be used in training.
     model.context = samples_dataset.context
 
+    # Store samples that it was trained on
+    model.metadata["train_settings"]["data"]["parameter_samples"] = samples_dataset.samples
+
     # set up dataloaders
     train_loader, test_loader = build_train_and_test_loaders(
         SampleDataset(samples_torch),

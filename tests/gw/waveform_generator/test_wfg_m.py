@@ -53,6 +53,24 @@ def intrinsic_prior():
     prior = build_prior_with_defaults(intrinsic_dict)
     return prior
 
+@pytest.fixture
+def intrinsic_prior_SEOBNRv4HM_PA():
+    intrinsic_dict = {
+        "chi_1": "bilby.gw.prior.AlignedSpin(name='chi_1', a_prior=Uniform(minimum=0, maximum=1.0))",
+        "chi_2": "bilby.gw.prior.AlignedSpin(name='chi_2', a_prior=Uniform(minimum=0, maximum=1.0))",
+        "chirp_mass": "bilby.gw.prior.UniformInComponentsChirpMass(minimum=10.0, maximum=50.0)",
+        "geocent_time": 0.0,
+        "luminosity_distance": 100.0,
+        "domega220": "bilby.gw.prior.Uniform(minimum=-0.8, maximum=2.0)",
+        "dtau220": "bilby.gw.prior.Uniform(minimum=-0.8, maximum=2.0)",
+        "mass_1": "bilby.core.prior.Constraint(minimum=10.0, maximum=80.0)",
+        "mass_2": "bilby.core.prior.Constraint(minimum=10.0, maximum=80.0)",
+        "mass_ratio": "bilby.gw.prior.UniformInComponentsMassRatio(minimum=0.125, maximum=1.0)",
+        "phase": 'bilby.core.prior.Uniform(minimum=0.0, maximum=2*np.pi, boundary="periodic")',
+        "theta_jn": "bilby.core.prior.Sine(minimum=0.0, maximum=np.pi)",
+    }
+    prior = build_prior_with_defaults(intrinsic_dict)
+    return prior
 
 def test_generate_hplus_hcross_m_SEOBNRv4PHM(uniform_fd_domain, intrinsic_prior):
     domain = uniform_fd_domain
@@ -82,7 +100,6 @@ def test_generate_hplus_hcross_m_SEOBNRv4PHM(uniform_fd_domain, intrinsic_prior)
     # We tested the mismatches for 20k waveforms, and the largest mismatch encountered
     # was 7e-4, while almost all mismatches were of order 1e-5.
     assert max(mismatches) < 5e-4
-
 
 def test_generate_hplus_hcross_m_IMRPhenomXPHM(uniform_fd_domain, intrinsic_prior):
     domain = uniform_fd_domain
@@ -118,3 +135,33 @@ def test_generate_hplus_hcross_m_IMRPhenomXPHM(uniform_fd_domain, intrinsic_prio
     # get should not have a big effect in practice.
     mismatches = np.array(mismatches)
     assert np.max(mismatches) < 2e-3
+
+def test_generate_hplus_hcross_m_SEOBNRv4HM_PA(uniform_fd_domain, intrinsic_prior_SEOBNRv4HM_PA):
+        domain = uniform_fd_domain
+        prior = intrinsic_prior_SEOBNRv4HM_PA
+        wfg = WaveformGenerator(
+            "SEOBNRv4HM_PA",
+            domain,
+            20.0,
+            spin_conversion_phase=0.0,
+        )
+
+        mismatches = []
+        for idx in range(10):
+            p = prior.sample()
+            phase_shift = np.random.uniform(high=2 * np.pi)
+
+            pol_m = wfg.generate_hplus_hcross_m(p)
+            pol = sum_contributions_m(pol_m, phase_shift=phase_shift)
+            pol_ref = wfg.generate_hplus_hcross({**p, "phase": p["phase"] + phase_shift})
+
+            mismatches.append(
+                [
+                    get_mismatch(pol[pol_name], pol_ref[pol_name], wfg.domain)
+                    for pol_name in pol
+                ]
+            )
+
+        # The mismatches are on the order 1e-20 for aligned spin models
+        mismatches = np.array(mismatches)
+        assert np.max(mismatches) < 5e-4

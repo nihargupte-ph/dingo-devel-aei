@@ -5,7 +5,6 @@ Step 2: Set up likelihood and prior
 import yaml
 from os import rename, makedirs
 from os.path import dirname, join, isfile, exists
-from types import SimpleNamespace
 import argparse
 
 from dingo.core.models import PosteriorModel
@@ -15,32 +14,55 @@ from dingo.core.density import train_unconditional_density_estimator
 from dingo.gw.importance_sampling.diagnostics import plot_diagnostics
 
 
-def importance_sample(settings, samples_dataset, outdir):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Importance sampling (IS) for dingo models."
+    )
+    parser.add_argument(
+        "--settings",
+        type=str,
+        required=True,
+        help="Path to settings file.",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        help="Output directory for the unconditional nde and IS results.",
+    )
+    args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = dirname(args.settings)
+
+    return args
+
+
+def main():
+    # parse args, load settings, load dingo parameter samples
+    args = parse_args()
+    with open(args.settings, "r") as fp:
+        settings = yaml.safe_load(fp)
+    samples_dataset = SamplesDataset(
+        file_name=settings["nde"]["data"]["parameter_samples"]
+    )
     metadata = samples_dataset.settings
     samples = samples_dataset.samples
     # for time marginalization, we drop geocent time from the samples
-    inference_parameters = metadata["train_settings"]["data"]["inference_parameters"].copy()
+    inference_parameters = metadata["train_settings"]["data"][
+        "inference_parameters"
+    ].copy()
     time_marginalization_kwargs = settings.get("time_marginalization", None)
-    time_marginalization = time_marginalization_kwargs is not None
-    phase_marginalization_kwargs = settings.get("phase_marginalization", None)
-    phase_marginalization = phase_marginalization_kwargs is not None
-    synthetic_phase_kwargs = settings.get("synthetic_phase", None)
-    synthetic_phase = synthetic_phase_kwargs is not None
-    # if sum([time_marginalization, phase_marginalization, synthetic_phase]) > 1:
-    #    raise NotImplementedError(
-    #        "Only one of time_marginalization, phase_marginalization and"
-    #        "synthetic_phase can be set to True."
-    #    )
-    if time_marginalization and "geocent_time" in samples:
-        if "geocent_time" in inference_parameters:
-            samples.drop("geocent_time", axis=1, inplace=True)
-            inference_parameters.remove("geocent_time")
-    if phase_marginalization or synthetic_phase:
-        if "phase" in inference_parameters:
-            samples.drop("phase", axis=1, inplace=True)
-            inference_parameters.remove("phase")
-    if "nde" in settings:
-        settings["nde"]["data"]["inference_parameters"] = inference_parameters
+    phase_marginalization = settings.get("phase_marginalization", False)
+    if time_marginalization_kwargs is not None and phase_marginalization:
+        raise NotImplementedError("Time and phase marginalization not yet compatible.")
+    if time_marginalization_kwargs is not None and "geocent_time" in samples:
+        samples.drop("geocent_time", axis=1, inplace=True)
+        inference_parameters.remove("geocent_time")
+    if phase_marginalization:
+        samples.drop("phase", axis=1, inplace=True)
+        inference_parameters.remove("phase")
+    settings["nde"]["data"]["inference_parameters"] = inference_parameters
 
     # Step 1: Build proposal distribution.
     #
@@ -57,7 +79,7 @@ def importance_sample(settings, samples_dataset, outdir):
             metadata["event"]["time_event"]
         )  # use gps time as name for now
         nde_name = settings["nde"].get(
-            "path", join(outdir, f"nde-{event_name}.pt")
+            "path", join(args.outdir, f"nde-{event_name}.pt")
         )
         if isfile(nde_name):
             print(f"Loading nde at {nde_name} for event {event_name}.")
@@ -69,22 +91,20 @@ def importance_sample(settings, samples_dataset, outdir):
         else:
             print(f"Training new nde for event {event_name}.")
             nde = train_unconditional_density_estimator(
-                samples_dataset, settings["nde"], outdir
+                samples_dataset, settings["nde"], args.outdir
             )
             print(f"Renaming trained nde model to {nde_name}.")
-            rename(join(outdir, "model_latest.pt"), nde_name)
-
-        nde_sampler = GWSamplerUnconditional(
-            model=nde, synthetic_phase_kwargs=synthetic_phase_kwargs
-        )
-
+            rename(join(args.outdir, "model_latest.pt"), nde_name)
     else:
-        nde_sampler = GWSamplerUnconditional(
-            samples_dataset=samples_dataset,
-            synthetic_phase_kwargs=synthetic_phase_kwargs,
+        raise NotImplementedError(
+            "Cannot currently perform importance sampling based "
+            "on just a samples dataset, even with log_prob "
+            "included. Please start with a posterior model."
         )
 
     # Step 2: Sample from proposal.
+
+    nde_sampler = GWSamplerUnconditional(model=nde)
     print(f'Generating {settings["num_samples"]} samples from proposal distribution.')
     nde_sampler.run_sampler(num_samples=settings["num_samples"])
 
@@ -105,14 +125,14 @@ def importance_sample(settings, samples_dataset, outdir):
     nde_sampler.importance_sample(
         num_processes=settings.get("num_processes", 1),
         time_marginalization_kwargs=time_marginalization_kwargs,
-        phase_marginalization_kwargs=phase_marginalization_kwargs,
+        phase_marginalization=phase_marginalization,
     )
     nde_sampler.print_summary()
-    nde_sampler.to_hdf5(label="weighted", outdir=outdir)
+    nde_sampler.to_hdf5(label="weighted", outdir=args.outdir)
     samples = nde_sampler.samples
 
     # Diagnostics
-    diagnostics_dir = join(outdir, "IS-diagnostics")
+    diagnostics_dir = join(args.outdir, "IS-diagnostics")
     if not exists(diagnostics_dir):
         makedirs(diagnostics_dir)
     print("Plotting diagnostics.")
@@ -122,43 +142,6 @@ def importance_sample(settings, samples_dataset, outdir):
         num_processes=settings.get("num_processes", 1),
         **settings.get("slice_plots", {}),
     )
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Importance sampling (IS) for dingo models."
-    )
-    parser.add_argument(
-        "--settings",
-        type=str,
-        required=True,
-        help="Path to settings file.",
-    )
-    parser.add_argument(
-        "--outdir",
-        type=str,
-        default=None,
-        help="Output directory for the unconditional nde and IS results.",
-    )
-    args = parser.parse_args()
-
-    if outdir is None:
-        outdir = dirname(args.settings)
-
-    return args
-
-def main():
-    # parse args, load settings, load dingo parameter samples
-    args = parse_args()
-    with open(args.settings, "r") as fp:
-        settings = yaml.safe_load(fp)
-    try:
-        samples_dataset = SamplesDataset(file_name=settings["parameter_samples"])
-    except KeyError:
-        # except statement for backward compatibility
-        samples_dataset = SamplesDataset(
-            file_name=settings["nde"]["data"]["parameter_samples"]
-        )
-    importance_sample(settings, samples_dataset, args.outdir)
 
 
 if __name__ == "__main__":

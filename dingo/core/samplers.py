@@ -390,8 +390,9 @@ class Sampler(object):
         log_prior = self.prior.ln_prob(theta, axis=0)
 
         # Check whether any constraints are violated that involve parameters not
-        # already present in theta.
-        constraints = self.prior.evaluate_constraints(theta)
+        # already present in theta. NOTE what is the point of this won't the samples already be in the prior??
+        # constraints = self.prior.evaluate_constraints(theta)
+        constraints = np.array([self.prior.evaluate_constraints(t) for _, t in theta.iterrows()])
         np.putmask(log_prior, constraints == 0, -np.inf)
 
         # The prior may evaluate to -inf for certain samples. For these, we do not want
@@ -413,7 +414,8 @@ class Sampler(object):
             theta = theta.iloc[within_prior].reset_index(drop=True)
             log_prob_proposal = log_prob_proposal[within_prior]
             log_prior = log_prior[within_prior]
-            delta_log_prob_target = delta_log_prob_target[within_prior]
+            if delta_log_prob_target != 0:
+                delta_log_prob_target = delta_log_prob_target[within_prior]
 
         print(f"Calculating {len(theta)} likelihoods.")
         t0 = time.time()
@@ -719,7 +721,7 @@ class GNPESampler(Sampler):
             x = self.transform_post(x)  # this also standardizes x["log_prob"]!
 
             samples = x["parameters"]
-            samples["log_prob"] = x["log_prob"] + log_prob_gnpe_proxies
+            samples["log_prob"] = x["log_prob"] + log_prob_gnpe_proxies # isn't this step what is stated below??
 
             # The log_prob returned by gnpe is not just the log_prob over parmeters
             # theta, but instead the log_prob in the *joint* space q(theta,theta^|x),

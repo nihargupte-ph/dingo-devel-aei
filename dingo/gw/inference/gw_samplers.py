@@ -8,7 +8,7 @@ from bilby.core.prior import Uniform, PriorDict, Constraint
 from bilby.gw.detector import InterferometerList
 from torchvision.transforms import Compose
 
-from dingo.core.samplers import Sampler, GNPESampler
+from dingo.core.samplers import Sampler, GNPESampler, UnconditionalSampler
 from dingo.core.transforms import GetItem, RenameKey
 from dingo.core.multiprocessing import apply_func_with_multiprocessing
 from dingo.gw.domains import build_domain
@@ -157,9 +157,7 @@ class GWSamplerMixin(object):
             t_ref = self.t_ref
 
         self.likelihood = StationaryGaussianGWLikelihood(
-            wfg_kwargs=self.base_model_metadata["dataset_settings"][
-                "waveform_generator"
-            ],
+            wfg_kwargs=self.base_model_metadata["dataset_settings"]["waveform_generator"],
             wfg_domain=build_domain(
                 self.base_model_metadata["dataset_settings"]["domain"]
             ),
@@ -268,8 +266,9 @@ class GWSamplerMixin(object):
         param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
         theta = pd.DataFrame(samples)[param_keys]
         log_prior = self.prior.ln_prob(theta, axis=0)
-        constraints = self.prior.evaluate_constraints(theta)
-        np.putmask(log_prior, constraints == 0, -np.inf)
+        # constraints = self.prior.evaluate_constraints(theta)
+        # constraints = np.array([self.prior.evaluate_constraints(t) for _, t in theta.iterrows()])
+        # np.putmask(log_prior, constraints == 0, -np.inf)
         within_prior = log_prior != -np.inf
 
         # Put a cap on the number of processes to avoid overhead:
