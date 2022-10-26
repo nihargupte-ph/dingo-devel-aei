@@ -16,7 +16,7 @@ from bilby.core.prior import Constraint
 from dingo.core.models import PosteriorModel
 from dingo.core.samples_dataset import SamplesDataset
 from dingo.core.density import train_unconditional_density_estimator
-from dingo.core.utils import torch_detach_to_cpu
+from dingo.core.utils import torch_detach_to_cpu, IterationTracker
 
 # FIXME: transform below should be in core
 from dingo.gw.transforms import SelectStandardizeRepackageParameters
@@ -86,7 +86,7 @@ class Sampler(object):
             ]
 
         elif self.samples_dataset is not None:
-            self.metadata = None
+            self.metadata = self.samples_dataset.settings.copy()
             self.unconditional_model = True
             self.context = self.samples_dataset.context
             self.base_model_metadata = self.samples_dataset.settings
@@ -100,6 +100,15 @@ class Sampler(object):
         self._build_domain()
         self._reset_result()
 
+        # keys with attributes to be saved by self.to_hdf5()
+        self.samples_dataset_keys = [
+            "settings",
+            "samples",
+            "context",
+            "log_evidence",
+            "n_eff",
+            "effective_sample_size",
+        ]
         self._pesummary_package = "core"
 
     def _reset_result(self):
@@ -108,6 +117,7 @@ class Sampler(object):
         self.samples = None
         self.log_evidence = None
         self.effective_sample_size = None
+        self.n_eff = None
 
     @property
     def context(self):
@@ -346,8 +356,8 @@ class Sampler(object):
         size of the importance sampled points.
 
         This method modifies the samples pd.DataFrame in-place, adding new columns for
-        log_likelihood, log_prior, and weights. It also stores log_evidence and
-        effective_sample_size attributes.
+        log_likelihood, log_prior, and weights. It also stores log_evidence,
+        effective_sample_size and n_eff attributes.
 
         Parameters
         ----------
@@ -376,14 +386,17 @@ class Sampler(object):
         # using the stored model. These form a normalized probability distribution.
         log_prob_proposal = self.samples["log_prob"].to_numpy()
 
-        delta_log_prob_target = 0
+        delta_log_prob_target = np.zeros(len(self.samples))
         if "delta_log_prob_target" in self.samples.columns:
             delta_log_prob_target = self.samples["delta_log_prob_target"].to_numpy()
 
         # select parameters in self.samples (required as log_prob and potentially gnpe
         # proxies are also stored in self.samples, but are not needed for the likelihood.
+        # TODO: replace by self.metadata["train_settings"]["data"]["inference_parameters"]
         param_keys = [k for k, v in self.prior.items() if not isinstance(v, Constraint)]
+        aux_keys = list(set(self.samples.keys()).difference(param_keys))
         theta = self.samples[param_keys]
+        aux_params = self.samples[aux_keys]
 
         # Calculate the (un-normalized) target density as prior times likelihood,
         # evaluated at the same sample points.
@@ -401,7 +414,9 @@ class Sampler(object):
         # no point in keeping these samples, we simply drop them; this means we do not
         # have to make special exceptions for outside-prior samples elsewhere in the
         # code. They do not contribute directly to the evidence or the effective sample
-        # size, so we are not losing anything useful.
+        # size, so we are not losing anything useful. However, it is important to count
+        # them in num_samples when computing the evidence, since they contribute to the
+        # normalization of the proposal distribution.
 
         within_prior = (log_prior + delta_log_prob_target) != -np.inf
         num_samples = len(self.samples)
@@ -412,6 +427,7 @@ class Sampler(object):
                 f"Dropping these."
             )
             theta = theta.iloc[within_prior].reset_index(drop=True)
+            aux_params = aux_params.iloc[within_prior].reset_index(drop=True)
             log_prob_proposal = log_prob_proposal[within_prior]
             log_prior = log_prior[within_prior]
             if delta_log_prob_target != 0:
@@ -436,6 +452,8 @@ class Sampler(object):
         self.samples["weights"] = weights
         self.samples["log_likelihood"] = log_likelihood
         self.samples["log_prior"] = log_prior
+        for k in aux_keys:
+            self.samples[k] = aux_params[k]
         # self.samples["delta_log_prob_target"] = delta_log_prob_target
 
         # The evidence
@@ -466,6 +484,12 @@ class Sampler(object):
         #   * q, \pi, L must be distributions in the same parameter space (the same
         #     coordinates). We have undone any standardizations so this is the case.
 
+        self.n_eff = np.sum(weights) ** 2 / np.sum(weights ** 2)
+        # ESS computed with len(weights) in denominator instead of num_samples,
+        # since we are interested in ESS per *likelihood evaluation*, not per
+        # Dingo sample.
+        self.effective_sample_size = self.n_eff / len(weights)
+
         self.log_evidence = logsumexp(log_weights) - np.log(num_samples)
         log_weights_all = np.pad(
             log_weights - self.log_evidence,
@@ -474,13 +498,9 @@ class Sampler(object):
         )
         assert np.allclose(np.mean(np.exp(log_weights_all)), 1)
         # log_evidence_std = 1/sqrt(n) (evidence_std / evidence)
-        self.log_evidence_std = (
-            # evidence / evidence cancels below
-            1
-            / np.sqrt(num_samples)
-            * np.std(np.exp(log_weights_all) - 1)
+        self.log_evidence_std = np.sqrt(
+            (num_samples - self.n_eff) / (num_samples * self.n_eff)
         )
-        self.effective_sample_size = np.sum(weights) ** 2 / np.sum(weights ** 2)
 
     def write_pesummary(self, filename):
         from pesummary.io import write
@@ -495,15 +515,14 @@ class Sampler(object):
         )
         # TODO: Save much more information.
 
+    @property
+    def settings(self):
+        return self.metadata
+
     def to_samples_dataset(self) -> SamplesDataset:
-        data_dict = {
-            "settings": self.metadata,
-            "samples": self.samples,
-            "context": self.context,
-            "log_evidence": self.log_evidence,
-            "effective_sample_size": self.effective_sample_size,
-        }
-        return SamplesDataset(dictionary=data_dict)
+        data_dict = {k: getattr(self, k) for k in self.samples_dataset_keys}
+        data_keys = [k for k in data_dict.keys() if k != "settings"]
+        return SamplesDataset(dictionary=data_dict, data_keys=data_keys)
 
     def to_hdf5(self, label="", outdir="."):
         dataset = self.to_samples_dataset()
@@ -517,8 +536,8 @@ class Sampler(object):
                 f"Log(evidence): {self.log_evidence:.3f} +-{self.log_evidence_std:.3f}"
             )
             print(
-                f"Effective sample size: {self.effective_sample_size:.1f} "
-                f"({100 * self.effective_sample_size / len(self.samples):.2f}%)"
+                f"Effective samples {self.n_eff:.1f}: "
+                f"(ESS = {100 * self.effective_sample_size:.2f}%)"
             )
 
 
@@ -567,7 +586,9 @@ class GNPESampler(Sampler):
         self.gnpe_parameters = None  # Should be set in subclass.
         self.gnpe_proxy_sampler = None
         self.log_prob_correction = None  # log_prob correction, accounting for std
-        self.gnpe_proxy_sampler = None
+        self.iteration_tracker = None
+        # remove self.remove_init_outliers of lowest log_prob init samples before gnpe
+        self.remove_init_outliers = 0.0
 
     @property
     def init_sampler(self):
@@ -597,6 +618,9 @@ class GNPESampler(Sampler):
         nde_settings: dict,
         batch_size: Optional[int] = None,
         threshold_std: Optional[float] = np.inf,
+        remove_init_outliers: Optional[float] = 0.0,
+        low_latency_label: str = None,
+        outdir: str = None,
     ):
         """
         Prepare gnpe sampling with log_prob. This is required, since in its vanilla
@@ -624,9 +648,18 @@ class GNPESampler(Sampler):
         threshold_std: float = np.inf
             gnpe proxies deviating by more then threshold_std standard deviations from
             the proxy mean (along any axis) are discarded.
+        low_latency_label: str = None
+            File label for low latency samples (= samples used for training nde).
+            If None, these samples are not saved.
+        outdir: str = None
+            Directory in which low latency samples are saved. Needs to be set if
+            low_latency_label is not None.
         """
+        self.remove_init_outliers = remove_init_outliers
         self.run_sampler(num_samples, batch_size)
         gnpe_proxy_keys = [k for k in self.samples.keys() if k.startswith("GNPE:")]
+        if low_latency_label is not None:
+            self.to_hdf5(label=low_latency_label, outdir=outdir)
         gnpe_proxy_pd = self.samples[gnpe_proxy_keys].rename(columns=lambda x: x[5:])
         gnpe_proxy_dataset = SamplesDataset(dictionary={"samples": gnpe_proxy_pd})
         # filter outliers, as they decrease the performance of the density estimator
@@ -670,16 +703,26 @@ class GNPESampler(Sampler):
 
         if not use_gnpe_proxy_sampler:
             # Run gnpe iterations to jointly infer gnpe proxies and inference parameters.
-            x = {
-                "extrinsic_parameters": self.init_sampler._run_sampler(
-                    num_samples, context
-                ),
-                "parameters": {},
-            }
+            self.iteration_tracker = IterationTracker(store_data=True)
+            if self.remove_init_outliers == 0.0:
+                init_samples = self.init_sampler._run_sampler(num_samples, context)
+            else:
+                init_samples = self.init_sampler._run_sampler(
+                    math.ceil(num_samples / (1 - self.remove_init_outliers)), context
+                )
+                thr = torch.quantile(
+                    init_samples["log_prob"], self.remove_init_outliers
+                )
+                inds = torch.where(init_samples["log_prob"] >= thr)[0][:num_samples]
+                init_samples = {k: v[inds] for k, v in init_samples.items()}
+            x = {"extrinsic_parameters": init_samples, "parameters": {}}
             for i in range(self.num_iterations):
                 x["extrinsic_parameters"] = {
                     k: x["extrinsic_parameters"][k] for k in self.gnpe_parameters
                 }
+                self.iteration_tracker.update(
+                    {k: v.cpu().numpy() for k, v in x["extrinsic_parameters"].items()}
+                )
                 d = data_.clone()
                 x["data"] = d.expand(num_samples, *d.shape)
 
@@ -688,8 +731,12 @@ class GNPESampler(Sampler):
                 x = self.transform_post(x)
                 samples = x["parameters"]
                 print(
-                    f"it {i}.\tproxy mean: ",
-                    *[f"{torch.mean(v).item():.5f}" for v in x["gnpe_proxies"].values()],
+                    f"it {i}.\tmin pvalue: {self.iteration_tracker.pvalue_min:.3f}"
+                    f"\tproxy mean: ",
+                    *[
+                        f"{torch.mean(v).item():.5f}"
+                        for v in x["gnpe_proxies"].values()
+                    ],
                     "\tproxy std:",
                     *[f"{torch.std(v).item():.5f}" for v in x["gnpe_proxies"].values()],
                 )
@@ -721,7 +768,8 @@ class GNPESampler(Sampler):
             x = self.transform_post(x)  # this also standardizes x["log_prob"]!
 
             samples = x["parameters"]
-            samples["log_prob"] = x["log_prob"] + log_prob_gnpe_proxies # isn't this step what is stated below??
+            samples["log_prob"] = x["log_prob"] + log_prob_gnpe_proxies
+            samples["log_prob_gnpe_proxies"] = log_prob_gnpe_proxies
 
             # The log_prob returned by gnpe is not just the log_prob over parmeters
             # theta, but instead the log_prob in the *joint* space q(theta,theta^|x),

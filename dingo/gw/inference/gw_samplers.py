@@ -16,7 +16,7 @@ from dingo.gw.gwutils import get_window_factor, get_extrinsic_prior_dict
 from dingo.gw.likelihood import (
     StationaryGaussianGWLikelihood,
 )
-from dingo.core.density.kde import (
+from dingo.core.density import (
     interpolated_sample_and_log_prob_multi,
     interpolated_log_prob_multi,
 )
@@ -33,6 +33,7 @@ from dingo.gw.transforms import (
     PostCorrectGeocentTime,
     CopyToExtrinsicParameters,
     GetDetectorTimes,
+    GNPEPhase,
 )
 
 
@@ -214,23 +215,30 @@ class GWSamplerMixin(object):
         """
         Sample a synthetic phase for the waveform. This is a post-processing step
         applicable to samples theta in the full parameter space, except for the phase
-        parameter (i.e., 14D samples). This step adds a theta parameter to the samples
+        parameter (i.e., 14D samples). This step adds a phase parameter to the samples
         based on likelihood evaluations.
 
         A synthetic phase is sampled as follows.
 
-            * Compute the waveform mu(theta, phase=0) for phase 0.
-            * Compute the likelihood for mu(theta, phase=0) * exp(2i*phase) on a
-              uniform grid of phase values in the range [0, 2pi).
-              Note that this is *not* equivalent to the actual likelihood for
-              (theta, phase) unless the waveform is fully dominated by the (2, 2) mode.
+            * Compute and cache the modes for the waveform mu(theta, phase=0) for
+              phase 0, organize them such that each contribution m transforms as
+              exp(-i * m * phase).
+            * Compute the likelihood on a phase grid, by computing mu(theta, phase) from
+              the cached modes. In principle this likelihood is exact, however, it can
+              deviate slightly from the likelihood computed without cached modes for
+              various technical reasons (e.g., slightly different windowing of cached
+              modes compared to full waveform when transforming TD waveform to FD).
+              These small deviations can be fully accounted for by importance sampling.
+              *Note*: when approximation_22_mode=True, the entire waveform is assumed
+              to transform as exp(2i*phase), in which case the likelihood is only exact
+              if the waveform is fully dominated by the (2, 2) mode.
             * Build a synthetic conditional phase distribution based on this grid. We
               use an interpolated prior distribution bilby.core.prior.Interped,
               such that we can sample and also evaluate the log_prob. We add a constant
               background with weight self.synthetic_phase_kwargs to the kde to make
               sure that we keep a mass-covering property. With this, the importance
-              sampling will yield exact results even if the synthetic phase conditional is
-              just an approximation.
+              sampling will yield exact results even when the synthetic phase conditional
+              is just an approximation.
 
         Besides adding phase samples to samples['phase'], this method also modifies
         samples['log_prob'] by adding the log_prob of the synthetic phase conditional.
@@ -307,11 +315,6 @@ class GWSamplerMixin(object):
             phasor = np.exp(2j * phases)
             phase_log_posterior = np.outer(d_inner_h_complex, phasor).real
         else:
-            # Define higher order function for log_likelihood on phase grid.
-            # This let's us set the phases argument, and prepares the function for the
-            # multiprocessing wrapper.
-            # def log_likelihood_phase_grid(theta_frame):
-            #     return self.likelihood.log_likelihood_phase_grid(theta_frame, phases)
             self.likelihood.phase_grid = phases
 
             phase_log_posterior = apply_func_with_multiprocessing(
@@ -651,10 +654,15 @@ class GWSamplerGNPE(GWSamplerMixin, GNPESampler):
 
         gnpe_time_settings = data_settings.get("gnpe_time_shifts")
         gnpe_chirp_settings = data_settings.get("gnpe_chirp")
-        if not gnpe_time_settings and not gnpe_chirp_settings:
+        gnpe_phase_settings = data_settings.get("gnpe_phase")
+        if (
+            not gnpe_time_settings
+            and not gnpe_chirp_settings
+            and not gnpe_phase_settings
+        ):
             raise KeyError(
-                "GNPE inference requires network trained for either chirp mass "
-                "or coalescence time GNPE."
+                "GNPE inference requires network trained for either chirp mass, "
+                "coalescence time, or phase GNPE."
             )
 
         # transforms for gnpe loop, to be applied prior to sampling step:
@@ -685,6 +693,13 @@ class GWSamplerGNPE(GWSamplerMixin, GNPESampler):
                 )
             )
             self.gnpe_kernel = {**self.gnpe_kernel, **transform_pre[-1].kernel}
+        if gnpe_phase_settings:
+            transform_pre.append(
+                GNPEPhase(
+                    gnpe_phase_settings["kernel"],
+                    gnpe_phase_settings.get("random_pi_jump", False),
+                )
+            )
         self.gnpe_kernel = PriorDict(self.gnpe_kernel)
         transform_pre.append(
             SelectStandardizeRepackageParameters(
@@ -718,16 +733,16 @@ class GWSamplerGNPE(GWSamplerMixin, GNPESampler):
                 ),
                 PostCorrectGeocentTime(),
                 CopyToExtrinsicParameters(
-                    "ra", "dec", "geocent_time", "chirp_mass", "mass_ratio"
+                    "ra", "dec", "geocent_time", "chirp_mass", "mass_ratio", "phase"
                 ),
                 GetDetectorTimes(ifo_list, data_settings["ref_time"]),
             ]
         )
 
     def _kernel_log_prob(self, samples):
-        if len({"chirp_mass", "mass_ratio"} & self.gnpe_kernel.keys()) > 0:
+        if len({"chirp_mass", "mass_ratio", "phase"} & self.gnpe_kernel.keys()) > 0:
             raise NotImplementedError(
-                "kernel log_prob not implemented for non-additive gnpe kernels."
+                "kernel log_prob only implemented for time gnpe."
             )
         gnpe_proxies_diff = {
             k: np.array(samples[k] - samples[f"{k}_proxy"])
