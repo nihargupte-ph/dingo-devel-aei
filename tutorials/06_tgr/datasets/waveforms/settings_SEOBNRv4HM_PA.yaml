@@ -10,6 +10,9 @@ domain:
   type: FrequencyDomain
   window_factor: 1.0
 intrinsic_prior:
+  # Consider adding these
+  mass_1: bilby.core.prior.Constraint(minimum=5.0, maximum=170.0)
+  mass_2: bilby.core.prior.Constraint(minimum=5.0, maximum=170.0)
   chi_1: bilby.gw.prior.AlignedSpin(name='chi_1', a_prior=Uniform(minimum=0, maximum=1.0))
   chi_2: bilby.gw.prior.AlignedSpin(name='chi_2', a_prior=Uniform(minimum=0, maximum=1.0))
   chirp_mass: bilby.gw.prior.UniformInComponentsChirpMass(minimum=10.0, maximum=50.0)
@@ -24,3 +27,4 @@ num_samples: 5000000
 waveform_generator:
   approximant: SEOBNRv4HM_PA
   f_ref: 20.0
+  spin_conversion_phase: 0

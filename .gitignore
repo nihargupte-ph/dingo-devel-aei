@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # C extensions
 *.so
@@ -70,6 +71,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/*
 
 # PyBuilder
 target/
@@ -108,6 +110,7 @@ celerybeat.pid
 .env
 .venv
 env/
+tgr_venv/
 venv/
 ENV/
 env.bak/
@@ -153,4 +156,9 @@ dmypy.json
 *.pickle
 *.json
 *.jpg
-tutorials/03_aligned_spin
+
+tgr_venv/
+tgr_venv_backup
+tutorials/06_tgr/dumps
+tutorials/06_tgr/train_dir*
+tutorials/06_tgr/datasets/posteriors/

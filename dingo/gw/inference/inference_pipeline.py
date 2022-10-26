@@ -119,7 +119,6 @@ def parse_args():
 
 
 def analyze_event():
-    torch.cuda.set_device(1)
     args = parse_args()
 
     if torch.cuda.is_available():

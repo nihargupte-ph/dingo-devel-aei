@@ -1,6 +1,0 @@
-device: cuda
-num_workers: 32
-checkpoint_epochs: 450
-runtime_limits:
-  max_time_per_run: 1000000
-  max_epochs_per_run: 450

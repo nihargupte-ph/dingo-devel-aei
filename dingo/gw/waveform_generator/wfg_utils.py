@@ -148,9 +148,9 @@ def get_polarizations_from_fd_modes_m(hlm_fd, iota, phase):
 
     for (l, m), h in hlm_fd.items():
 
-        if (l, m) not in pol_m:
-            pol_m[(l, m)] = {k: 0.0 for k in polarizations}
-            pol_m[(l, -m)] = {k: 0.0 for k in polarizations}
+        if m not in pol_m:
+            pol_m[m] = {k: 0.0 for k in polarizations}
+            pol_m[-m] = {k: 0.0 for k in polarizations}
 
         # In the L0 frame, we compute the polarizations from the modes using the
         # spherical harmonics below.
@@ -171,10 +171,10 @@ def get_polarizations_from_fd_modes_m(hlm_fd, iota, phase):
         # This differs from the usual way, e.g.,
         #   https://lscsoft.docs.ligo.org/lalsuite/lalsimulation/
         #   _l_a_l_sim_inspiral_8c_source.html#l04801
-        pol_m[(l, m)]["h_plus"] += 0.5 * h1 * ylm
-        pol_m[(l, -m)]["h_plus"] += 0.5 * h2 * ylmstar
-        pol_m[(l, m)]["h_cross"] += 0.5 * 1j * h1 * ylm
-        pol_m[(l, -m)]["h_cross"] += -0.5 * 1j * h2 * ylmstar
+        pol_m[m]["h_plus"] += 0.5 * h1 * ylm
+        pol_m[-m]["h_plus"] += 0.5 * h2 * ylmstar
+        pol_m[m]["h_cross"] += 0.5 * 1j * h1 * ylm
+        pol_m[-m]["h_cross"] += -0.5 * 1j * h2 * ylmstar
 
     return pol_m
 

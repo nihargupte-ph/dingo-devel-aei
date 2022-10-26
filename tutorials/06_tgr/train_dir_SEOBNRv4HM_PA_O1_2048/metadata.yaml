@@ -172,3 +172,25 @@ train_settings:
       scheduler:
         factor: 0.5
         type: reduce_on_plateau
+    stage_2:
+      asd_dataset_path: /data/nihargupte/datasets/ASDs/O1/2048_dingo/asds_O1.hdf5
+      batch_size: 4096
+      epochs: 150
+      freeze_rb_layer: false
+      optimizer:
+        lr: 1.0e-05
+        type: adam
+      scheduler:
+        factor: 0.5
+        type: reduce_on_plateau
+    stage_3:
+      asd_dataset_path: /data/nihargupte/datasets/ASDs/O1/2048_dingo/asds_O1.hdf5
+      batch_size: 4096
+      epochs: 150
+      freeze_rb_layer: false
+      optimizer:
+        lr: 1.0e-05
+        type: adam
+      scheduler:
+        factor: 0.5
+        type: reduce_on_plateau

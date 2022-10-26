@@ -101,6 +101,7 @@ def plot_posterior_slice(
 
     plt.legend()
     if outname is not None:
+        ax[0, 0].legend()
         plt.savefig(outname)
     else:
         plt.show()
@@ -173,41 +174,46 @@ def plot_diagnostics(
         theta_range_1d = {
             k: (np.min(theta[k]), np.max(theta[k])) for k in theta_slice_plots.columns
         }
-        # generate slice plots for each theta sample
-        for idx, (_, theta_idx) in enumerate(theta_slice_plots.iterrows()):
-            # 1d slice plots
-            plot_posterior_slice(
-                sampler,
-                theta_idx,
-                theta_range_1d,
-                num_processes=num_processes,
-                n_grid=n_grid_slice1d,
-                outname=join(outdir, f"theta_{idx}_posterior_slice1d.pdf"),
-            )
-            # optionally, plot 2d slice plots
-            if params_slice2d is not None:
-                # Get parameter ranges for 2d scan.
-                # We set this as a 1 std area around the respective parameter values,
-                # except for the phase which we scan in [0, 2pi].
-                stds = {k: np.std(theta[k]) for k in theta.keys()}
-                theta_range_2d = {
-                    k: (theta_idx[k] - stds[k], theta_idx[k] + stds[k])
-                    for k in theta_idx.keys()
-                }
-                theta_range_2d["phase"] = (0, 2 * np.pi)
-                for param_pair in params_slice2d:
-                    plot_posterior_slice2d(
-                        sampler,
-                        theta_idx,
-                        {k: theta_range_2d[k] for k in param_pair},
-                        num_processes=num_processes,
-                        n_grid=n_grid_slice2d,
-                        outname=join(
-                            outdir,
-                            f"theta_{idx}_posterior_slice2d_"
-                            f"{param_pair[0]}-{param_pair[1]}.pdf",
-                        ),
-                    )
+
+        # NOTE TEMP
+        try:
+            # generate slice plots for each theta sample
+            for idx, (_, theta_idx) in enumerate(theta_slice_plots.iterrows()):
+                # 1d slice plots
+                plot_posterior_slice(
+                    sampler,
+                    theta_idx,
+                    theta_range_1d,
+                    num_processes=num_processes,
+                    n_grid=n_grid_slice1d,
+                    outname=join(outdir, f"theta_{idx}_posterior_slice1d.png"),
+                )
+                # optionally, plot 2d slice plots
+                if params_slice2d is not None:
+                    # Get parameter ranges for 2d scan.
+                    # We set this as a 1 std area around the respective parameter values,
+                    # except for the phase which we scan in [0, 2pi].
+                    stds = {k: np.std(theta[k]) for k in theta.keys()}
+                    theta_range_2d = {
+                        k: (theta_idx[k] - stds[k], theta_idx[k] + stds[k])
+                        for k in theta_idx.keys()
+                    }
+                    theta_range_2d["phase"] = (0, 2 * np.pi)
+                    for param_pair in params_slice2d:
+                        plot_posterior_slice2d(
+                            sampler,
+                            theta_idx,
+                            {k: theta_range_2d[k] for k in param_pair},
+                            num_processes=num_processes,
+                            n_grid=n_grid_slice2d,
+                            outname=join(
+                                outdir,
+                                f"theta_{idx}_posterior_slice2d_"
+                                f"{param_pair[0]}-{param_pair[1]}.pdf",
+                            ),
+                        )
+        except:
+            print("failed", theta_idx)
 
     # cornerplot with unweighted vs. weighted samples
     weights = weights / np.mean(weights)

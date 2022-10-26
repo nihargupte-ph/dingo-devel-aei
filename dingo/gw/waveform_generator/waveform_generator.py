@@ -542,11 +542,9 @@ class WaveformGenerator:
             )
 
         # Depending on whether the domain is uniform or non-uniform call the appropriate wf generator
-        print(parameters_lal)
         hp, hc = LS.SimInspiralFD(*parameters_lal)
         h_plus = hp.data.data
         h_cross = hc.data.data
-        print(h_plus[0])
         pol_dict = {"h_plus": h_plus, "h_cross": h_cross}
         # The check below filters for unphysical waveforms:
         # For IMRPhenomXPHM, the LS.SimInspiralFD result is numerically instable
@@ -1006,7 +1004,7 @@ def sum_contributions_m(x_m, phase_shift=0.0):
     keys = next(iter(x_m.values())).keys()
     result = {key: 0.0 for key in keys}
     for key in keys:
-        for (l, m), x in x_m.items():
+        for m, x in x_m.items():
             result[key] += np.nan_to_num(x[key]) * np.exp(-1j * m * phase_shift)
     return result
 

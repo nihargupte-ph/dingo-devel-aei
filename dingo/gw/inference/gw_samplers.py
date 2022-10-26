@@ -267,8 +267,8 @@ class GWSamplerMixin(object):
         theta = pd.DataFrame(samples)[param_keys]
         log_prior = self.prior.ln_prob(theta, axis=0)
         # constraints = self.prior.evaluate_constraints(theta)
-        # constraints = np.array([self.prior.evaluate_constraints(t) for _, t in theta.iterrows()])
-        # np.putmask(log_prior, constraints == 0, -np.inf)
+        constraints = np.array([self.prior.evaluate_constraints(t) for _, t in theta.iterrows()])
+        np.putmask(log_prior, constraints == 0, -np.inf)
         within_prior = log_prior != -np.inf
 
         # Put a cap on the number of processes to avoid overhead:
