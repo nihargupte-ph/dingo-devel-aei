@@ -1,20 +1,19 @@
 compression:
   svd:
     num_training_samples: 50000
-    num_validation_samples: 500
-    size: 200
+    num_validation_samples: 10000
+    size: 300
 domain:
   delta_f: 0.125
   f_max: 2048
   f_min: 20
   type: FrequencyDomain
-  window_factor: 1.0
 intrinsic_prior:
-  mass_1: bilby.core.prior.Constraint(minimum=5.0, maximum=300.0)
-  mass_2: bilby.core.prior.Constraint(minimum=5.0, maximum=300.0)
+  mass_1: bilby.core.prior.Constraint(minimum=10.0, maximum=80.0)
+  mass_2: bilby.core.prior.Constraint(minimum=10.0, maximum=80.0)
   chi_1: bilby.gw.prior.AlignedSpin(name='chi_1', a_prior=Uniform(minimum=0, maximum=1.0))
   chi_2: bilby.gw.prior.AlignedSpin(name='chi_2', a_prior=Uniform(minimum=0, maximum=1.0))
-  chirp_mass: bilby.gw.prior.UniformInComponentsChirpMass(minimum=10.0, maximum=200.0)
+  chirp_mass: bilby.gw.prior.UniformInComponentsChirpMass(minimum=15.0, maximum=150.0)
   geocent_time: 0.0
   luminosity_distance: 100.0
   domega220: bilby.gw.prior.Uniform(minimum=-0.8, maximum=2.0)
@@ -22,8 +21,9 @@ intrinsic_prior:
   mass_ratio: bilby.gw.prior.UniformInComponentsMassRatio(minimum=0.125, maximum=1.0)
   phase: default
   theta_jn: default
-num_samples: 5000000
+num_samples: 7500000
 waveform_generator:
   approximant: SEOBNRv4HM_PA
   f_ref: 20.0
+  f_start: 11.0
   spin_conversion_phase: 0
