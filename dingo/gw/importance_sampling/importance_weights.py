@@ -15,7 +15,39 @@ from dingo.core.density import train_unconditional_density_estimator
 from dingo.gw.importance_sampling.diagnostics import plot_diagnostics
 
 
-def importance_sample(settings, samples_dataset, outdir):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Importance sampling (IS) for dingo models."
+    )
+    parser.add_argument(
+        "--settings",
+        type=str,
+        required=True,
+        help="Path to settings file.",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        help="Output directory for the unconditional nde and IS results.",
+    )
+    args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = dirname(args.settings)
+
+    return args
+
+
+def importance_sample(settings, outdir):
+    try:
+        samples_dataset = SamplesDataset(file_name=settings["parameter_samples"])
+    except KeyError:
+        # except statement for backward compatibility
+        samples_dataset = SamplesDataset(
+            file_name=settings["nde"]["data"]["parameter_samples"]
+        )
+
     metadata = samples_dataset.settings
     samples = samples_dataset.samples
     # for time marginalization, we drop geocent time from the samples
@@ -179,6 +211,15 @@ def main():
         )
     importance_sample(settings, samples_dataset, args.outdir)
 
+
+def main():
+    # parse args, load settings, load dingo parameter samples
+    args = parse_args()
+    with open(args.settings, "r") as fp:
+        settings = yaml.safe_load(fp)
+
+
+    importance_sample(settings, args.outdir)
 
 if __name__ == "__main__":
     main()
