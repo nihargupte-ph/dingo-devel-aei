@@ -18,6 +18,8 @@ import dingo.gw.waveform_generator.wfg_utils as wfg_utils
 import dingo.gw.waveform_generator.frame_utils as frame_utils
 from dingo.gw.domains import Domain, FrequencyDomain, TimeDomain
 
+from pyseobnr.generate_waveform import GenerateWaveform
+
 
 class WaveformGenerator:
     """Generate polarizations in the specified domain for a
@@ -86,6 +88,7 @@ class WaveformGenerator:
         self.f_start = f_start
 
         self.lal_params = None
+        self.mode_list = mode_list
         if mode_list is not None:
             self.lal_params = self.setup_mode_array(mode_list)
 
@@ -185,6 +188,9 @@ class WaveformGenerator:
         else:
             raise ValueError(f"Unsupported domain type {type(self.domain)}.")
 
+        if self.approximant_str == "SEOBNRv5HM":
+            parameters_lal = self._convert_parameters_pyseobnr(parameters) #It is more convenient to have the original dict for v5
+            wf_generator = self.generate_pyseobnr_waveform
         try:
             wf_dict = wf_generator(parameters_lal)
         except Exception as e:
@@ -274,7 +280,7 @@ class WaveformGenerator:
             "SimInspiralChooseTDModes",
             "SimInspiralChooseFDModes",
             "SimIMRPhenomXPCalculateModelParametersFromSourceFrame",
-            "SimIMRSpinAlignedEOBModes",
+            "SimIMRSpinAlignedEOBModes"
         ]:
             raise ValueError(
                 f"Unsupported lalsimulation waveform function {lal_target_function}."
@@ -473,6 +479,7 @@ class WaveformGenerator:
             )
             # also pass iota, since this is needed for recombination of the modes
             lal_parameter_tuple = (lal_parameter_tuple, iota)
+
         return lal_parameter_tuple
 
     def setup_mode_array(self, mode_list: List[Tuple]) -> lal.Dict:
@@ -869,6 +876,77 @@ class WaveformGenerator:
         pol_dict = {"h_plus": h_plus, "h_cross": h_cross}
         return pol_dict
 
+    def generate_pyseobnr_waveform(self, parameters) -> Dict[str, np.ndarray]:
+
+        gen = GenerateWaveform(parameters)
+
+        if isinstance(self.domain, FrequencyDomain):
+            hp, hc = gen.generate_fd_polarizations()
+        if isinstance(self.domain, TimeDomain):
+            hp, hc = gen.generate_td_polarizations()
+        h_plus = hp.data.data
+        h_cross = hc.data.data
+        pol_dict = {"h_plus": h_plus, "h_cross": h_cross}
+        return pol_dict
+
+    def _convert_parameters_pyseobnr(
+        self,
+        parameter_dict: Dict
+    ):
+        # Transform mass, spin, and distance parameters
+        p, _ = convert_to_lal_binary_black_hole_parameters(parameter_dict)
+        # Transform to lal source frame: iota and Cartesian spin components
+        param_keys_in = (
+            "theta_jn",
+            "phi_jl",
+            "tilt_1",
+            "tilt_2",
+            "phi_12",
+            "a_1",
+            "a_2",
+            "mass_1",
+            "mass_2",
+            "f_ref",
+            "phase",
+        )
+        param_values_in = [p[k] for k in param_keys_in]
+        # if spin_conversion_phase is set, use this as fixed phiRef when computing the
+        # cartesian spins instead of using the phase parameter
+        if self.spin_conversion_phase is not None:
+            param_values_in[-1] = self.spin_conversion_phase
+        iota_and_cart_spins = bilby_to_lalsimulation_spins(*param_values_in)
+        iota, s1x, s1y, s1z, s2x, s2y, s2z = [
+            float(self._convert_to_scalar(x)) for x in iota_and_cart_spins
+        ]
+
+        delta_f = self.domain.delta_f
+        f_max = self.domain.f_max
+        if self.f_start is not None:
+            f_min = self.f_start
+        else:
+            f_min = self.domain.f_min
+        # parameters needed for TD waveforms
+        delta_t = 0.5 / self.domain.f_max
+
+        params_pyseobnr = {'mass1' : p["mass_1"],
+              'mass2' : p["mass_2"],
+              'spin1x' : s1x,
+              'spin1y' : s1y,
+              'spin1z' : s1z,
+              'spin2x' : s2x,
+              'spin2y' : s2y,
+              'spin2z' : s2z,
+              'deltaT' : delta_t,
+              'f22_start' : f_min,
+              'f_ref': p["f_ref"],
+              'f_max': f_max,
+              'deltaF' : delta_f,
+              'phi_ref' : p["phase"],
+              'distance' : p["luminosity_distance"],
+              'inclination' : iota,
+                'mode_array': self.mode_list}
+
+        return params_pyseobnr
 
 def SEOBNRv4PHM_maximum_starting_frequency(
     total_mass: float, fudge: float = 0.99
