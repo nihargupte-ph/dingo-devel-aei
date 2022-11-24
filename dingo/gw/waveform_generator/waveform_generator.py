@@ -1009,6 +1009,18 @@ def sum_contributions_m(x_m, phase_shift=0.0):
     return result
 
 
+def sum_contributions_lm(x_m, phase_shift=0.0):
+    """
+    Sum the contributions over lm-components, optionally introducing a phase shift.
+    """
+    keys = next(iter(x_m.values())).keys()
+    result = {key: 0.0 for key in keys}
+    for key in keys:
+        for (l, m), x in x_m.items():
+            assert l >= m
+            result[key] += np.nan_to_num(x[key]) * np.exp(-1j * m * phase_shift)
+    return result
+
 if __name__ == "__main__":
     import pandas as pd
     import numpy as np
