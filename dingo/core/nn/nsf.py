@@ -6,9 +6,9 @@ import copy
 
 import torch
 import torch.nn as nn
-import nflows
-from nflows import distributions, flows, transforms
-import nflows.nn.nets as nflows_nets
+import glasflow.nflows as nflows  # nflows not maintained, so use this maintained fork
+from glasflow.nflows import distributions, flows, transforms
+import glasflow.nflows.nn.nets as nflows_nets
 from dingo.core.utils import torchutils
 from dingo.core.nn.enets import create_enet_with_projection_layer_and_dense_resnet
 from typing import Union, Callable, Tuple
@@ -238,8 +238,9 @@ class FlowWrapper(nn.Module):
         if len(x) > 0:
             return self.log_prob(y, *x)
         else:
-        # if there is no context, omit the context argument
+            # if there is no context, omit the context argument
             return self.log_prob(y)
+
 
 def create_nsf_model(
     input_dim: int,
@@ -371,7 +372,7 @@ def autocomplete_model_kwargs_nsf(model_kwargs, data_sample):
         updated, autocompleted model_kwargs
     """
     # set input dims from ifo_list and domain information
-    model_kwargs["embedding_net_kwargs"]["input_dims"] = data_sample[1].shape
+    model_kwargs["embedding_net_kwargs"]["input_dims"] = list(data_sample[1].shape)
     # set dimension of parameter space of nsf
     model_kwargs["nsf_kwargs"]["input_dim"] = len(data_sample[0])
     # set added_context flag of embedding net if gnpe proxies are required
