@@ -4,20 +4,21 @@ from abc import ABC
 from functools import partial
 import numpy as np
 import pandas as pd
+import glob
+import subprocess
+import re 
 
 import bilby
 import scipy
 from matplotlib import colors
 import scipy.stats
 from chainconsumer import ChainConsumer
+from pesummary.gw.conversions import convert
 
 from dingo.gw.domains import build_domain, build_domain_from_model_metadata
-
-
-def effective_spin(chi_1, chi_2, mass_ratio):
-    a = chi_1 + mass_ratio * chi_2
-    b = 1 + mass_ratio
-    return a / b
+from dingo.gw.result import Result
+from dingo.core.models import PosteriorModel
+from dingo.gw.inference.gw_samplers import GWSamplerGNPE, GWSampler
 
 
 def get_snr(domain, asd, strain_data, duration=8.0):
@@ -48,46 +49,55 @@ def get_snr(domain, asd, strain_data, duration=8.0):
     return snrs, freq_snr_squared, network_snr
 
 
+def find_files_with_extension(directory, extension):
+    pattern = os.path.join(directory, f"*.{extension}")
+    matching_files = glob.glob(pattern)
+    return matching_files
+
 class PosteriorList:
+    """ 
+    Class which is used to store posteriors from dingo analyses. This will store both
+    the injected value and the recovered posterior samples 
+    """
     def __init__(self):
-        self.data_dict = {}
+        self.mast_dict = {}
 
     def append_var(self, var):
-        self.data_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None}
+        self.mast_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None}
 
     def append_posterior(self, var, new_posterior):
-        if self.data_dict[var]["posteriors"] == None:
-            self.data_dict[var]["posteriors"] = {
+        if self.mast_dict[var]["posteriors"] == None:
+            self.mast_dict[var]["posteriors"] = {
                 k: v.reshape(1, -1) for k, v in new_posterior.items()
             }
         else:
-            for k in self.data_dict[var]["posteriors"].keys():
+            for k in self.mast_dict[var]["posteriors"].keys():
                 posterior = np.concatenate(
                     [
-                        self.data_dict[var]["posteriors"][k],
+                        self.mast_dict[var]["posteriors"][k],
                         new_posterior[k].reshape(1, -1),
                     ],
                     axis=0,
                 )
-                self.data_dict[var]["posteriors"][k] = posterior
+                self.mast_dict[var]["posteriors"][k] = posterior
 
     def append_truth(self, var, truth):
-        self.data_dict[var]["truth"] = truth
+        self.mast_dict[var]["truth"] = convert(truth)
 
     def append_snr(self, var, snr):
-        if self.data_dict[var]["snr"] == None:
-            self.data_dict[var]["snr"] = [snr]
+        if self.mast_dict[var]["snr"] == None:
+            self.mast_dict[var]["snr"] = [snr]
         else:
-            self.data_dict[var]["snr"] = self.data_dict[var]["snr"] + [snr]
+            self.mast_dict[var]["snr"] = self.mast_dict[var]["snr"] + [snr]
         
     def append_ess(self, var, ess, sample_efficiency):
-        self.data_dict[var] = {
-            "ess": ess,
+        self.mast_dict[var] = {
+            "effective_sample_size": ess,
             "sample_efficiency": sample_efficiency
         }
 
     def __getitem__(self, idx, conflation=False):
-        return self.data_dict[list(self.data_dict.keys())[idx]]
+        return self.mast_dict[list(self.mast_dict.keys())[idx]]
 
     def get_mean(self, idx):
         posteriors = self.__getitem__(idx)["posteriors"]
@@ -106,15 +116,24 @@ class PosteriorList:
         return ret
 
     def __len__(self):
-        return len(self.data_dict)
+        return len(self.mast_dict)
 
     @property
     def index_vars(self):
-        return list(self.data_dict.keys())
+        return list(self.mast_dict.keys())
 
 
 class Bias(ABC):
-    def __init__(self, sampler, injection_generator, _injection_parameters):
+    def __init__(self, sampler_settings, injection_generator, _injection_parameters):
+        self.sampler_settings = sampler_settings
+
+        # initializing GNPE samplers 
+        main_pm = PosteriorModel(model_filename=sampler_settings["model_fpath"], device=sampler_settings["device"])
+        init_pm = PosteriorModel(model_filename=sampler_settings["model_init_fpath"], device=sampler_settings["device"])
+        init_sampler = GWSampler(model=init_pm)
+        sampler = GWSamplerGNPE(model=main_pm, init_sampler=init_sampler, num_iterations=sampler_settings["num_gnpe_iterations"])
+
+        # settings sampler and domain
         self.sampler = sampler
         self.domain = build_domain_from_model_metadata(sampler.model.metadata)
         self.injection_generator = injection_generator
@@ -123,47 +142,7 @@ class Bias(ABC):
     @property
     def injection_parameters(self):
         # There are additional injection parameters which can be derived
-        ret = self._injection_parameters
-        # FIXME need to implement effective spin for precession
-        if not "phi_jl" in list(self._injection_parameters.keys()):
-            if "chi_eff" in list(self._injection_parameters.keys()):
-                # Assuming only scheme right now is symmetric spin
-                ret["chi_1"] = ret["chi_eff"]
-                ret["chi_2"] = ret["chi_eff"]
-            else:
-                ret["chi_eff"] = effective_spin(
-                    ret["chi_1"],
-                    ret["chi_2"],
-                    ret["mass_ratio"],
-                )
-
-        if "total_mass" in list(self._injection_parameters.keys()):
-            (
-                mass_1,
-                mass_2,
-            ) = bilby.gw.conversion.total_mass_and_mass_ratio_to_component_masses(
-                self._injection_parameters["mass_ratio"],
-                self._injection_parameters["total_mass"],
-            )
-            ret["mass_1"] = mass_1
-            ret["mass_2"] = mass_2
-        else:
-            ret[
-                "total_mass"
-            ] = bilby.gw.conversion.chirp_mass_and_mass_ratio_to_total_mass(
-                ret["chirp_mass"],
-                ret["mass_ratio"],
-            )
-
-        (
-            mass_1,
-            mass_2,
-        ) = bilby.gw.conversion.total_mass_and_mass_ratio_to_component_masses(
-            ret["mass_ratio"], ret["total_mass"]
-        )
-        ret["mass_1"] = mass_1
-        ret["mass_2"] = mass_2
-        ret = pd.DataFrame(ret)
+        ret = pd.DataFrame(convert(self._injection_parameters))
         return ret
 
     @injection_parameters.setter
@@ -174,6 +153,7 @@ class Bias(ABC):
         }
 
     def check_prior(self, params):
+        raise NotImplementedError
         # NOTE NOTE NOTE this function is BROKEN RIGHT NOW NOT EVEN CHECKING PRIORS!
         tmp_result = self.sampler.to_result()
         prior = tmp_result.prior
@@ -213,17 +193,17 @@ class Bias(ABC):
             rescaled_injection_parameters["luminosity_distance"][idx] = res.x
         self._injection_parameters = rescaled_injection_parameters
 
-    def recalculate_params(self):
-        self.sampler.samples["mass_1"], self.sampler.samples["mass_2"] = bilby.gw.conversion.chirp_mass_and_mass_ratio_to_component_masses(
-            self.sampler.samples["chirp_mass"], 
-            self.sampler.samples["mass_ratio"]
-        )
-        self.sampler.samples["total_mass"] = self.sampler.samples["mass_1"] + self.sampler.samples["mass_2"]
-        self.sampler.samples["chi_eff"] = effective_spin(self.sampler.samples["chi_1"], self.sampler.samples["chi_2"], self.sampler.samples["mass_ratio"])
 
 class Bias1D(Bias):
     def __init__(self, sampler, injection_generator, params, injection_parameters):
-        
+        """ 
+        Parameters
+        ----------
+        sampler : dingo.gw.inference.gw_samplers.GWSamplerGNPE or dingo.gw.inference.gw_samplers.GWSampler  
+            Sampler to use when analyzing the event
+         
+        """
+
         if len(np.unique([sa.shape for sa in params.values()])) == 1:
             self.length = list(params.values())[0].shape[0]
         else:
@@ -231,48 +211,98 @@ class Bias1D(Bias):
         super().__init__(sampler, injection_generator, injection_parameters)
         self.param_names = list(params.keys())
         self.params = params
-        self.check_prior(self.params)
+        # self.check_prior(self.params)
+
+        # defining injection parameters to iterate through
         for param_name, sweep_array in self.params.items():
             self._injection_parameters[param_name] = sweep_array
 
-    def sweep(
-        self, num_samples=1_000, batch_size=1_000, num_avg_points=1, interest_params="*"
-    ):
-        if interest_params == "*":
-            interest_params = [p for p in self.sampler.prior.keys()]
-        self.interest_params = interest_params
-        self.posterior_list = PosteriorList()
+    def from_folder(self):
+        pass
+
+    def sweep(self, template_fpath, outdir):
+        """ 
+        Parameters
+        ----------
+        template_fpath : str
+            Path to a .ini file used by dingo pipe. These settings will be
+            used to analyze the injection
+        """
+        # saving injection parameters for sweep 
+        self.injection_parameters.to_csv(os.path.join(outdir, "injection_parameters.csv"))
+
         # Iterate through the injection parameters and for each one generate a posterior
         for idx in self.injection_parameters.index:
+            # Step 1: open the .ini file 
+            with open(template_fpath, "r") as file:
+                lines = file.readlines()
+
+            # Step 2: Write to a new fpath 
+            # TODO add a means to take the properties of the injection_generator and adjust
+            # the ini file to match them
+            new_fpath = os.path.join(outdir, f"{str(idx)}.ini")
+            with open(new_fpath, "w+") as file:
+                for line in lines:
+                    if line.startswith("injection-dict"):
+                        file.write(line.replace("_injection_dict", str(self.injection_parameters.iloc[idx].to_dict())))
+                    elif line.startswith("label"):
+                        file.write(line.replace("_label", str(idx)))
+                    elif line.startswith("model-init"):
+                        file.write(line.replace("_model_init.pt", self.sampler_settings["model_init_fpath"]))
+                    elif line.startswith("model"):
+                        file.write(line.replace("_model.pt", self.sampler_settings["model_fpath"]))
+                    elif line.startswith("outdir"):
+                        file.write(line.replace("_./outdir", f"./outdir_{str(idx)}"))
+                    else:
+                        file.write(line)
+            
+            # pipe the ini file
+            command = ["dingo_pipe", new_fpath, "--local-generation"]
+            output = subprocess.check_output(command, cwd=os.path.join(outdir))
+
+            # submit the ini file
+            command = ["condor_submit_dag", "-f", f"{outdir}/outdir_{idx}/submit/dag_{idx}.submit"]
+            output = subprocess.check_output(command, cwd=outdir)
+
+    def load_posterior_list(self, load_dir):
+        """ 
+        Parameters
+        ----------
+        load_dir : str 
+            Directory which contains all importance sampled results 
+        """
+        # check that the injection parameters are the same as what is currently stored
+        saved_injection_parameters = pd.read_csv(os.path.join(load_dir, "injection_parameters.csv"))
+        if not self.injection_parameters.equals(saved_injection_parameters):
+            raise ValueError("Saved injection parameters are not the same as loaded injection parameters")
+
+        self.posterior_list = PosteriorList()
+
+        for idx in self.injection_parameters.index:
+            result = Result(file_name=os.path.join(load_dir, f"outdir_{idx}", "result", "???"))
+
+            # add check here to make sure stored injection is same as self.injection_parameters
+
             # Record the sweep array value for each posterior, this serves as a key
             var = tuple([self.injection_parameters[n][idx] for n in self.param_names])
             self.posterior_list.append_var(var)
-            truth = {k:(self.injection_parameters.iloc[idx][k] if k in self.injection_parameters.columns else 0) for k in interest_params}
-            self.posterior_list.append_truth(var, truth)
 
-            for _ in range(num_avg_points):
-                strain_data = self.injection_generator.injection(
-                    self.injection_parameters.iloc[idx]
-                )
-                self.sampler.context = strain_data.copy()
-                self.sampler.run_sampler(
-                    num_samples=num_samples,
-                    batch_size=batch_size,
-                )
-                result = self.sampler.to_result()
-                # result.importance_sample()
-                _, _, network_snr = get_snr(
-                    self.domain, self.injection_generator.asd, strain_data
-                )
-                self.posterior_list.append_snr(var, network_snr.real)
-                # self.posterior_list.append_ess(var, result.effective_sample_size, result.sample_efficiency)
-                self.posterior_list.append_posterior(
-                    var,
-                    {k: self.sampler.samples[k].to_numpy() for k in interest_params},
-                )
+            # appending truth values
+            self.posterior_list.append_truth(var, self.injection_parameters.iloc[idx])
+
+            # appending posterior 
+            self.posterior_list.append_posterior(var, pd.DataFrame(convert(result.samples)))
+
+            # appending effective sample size
+            self.posterior_list.append_ess(var, result.effective_sample_size, result.sample_efficiency)
+
+            # TODO add method which appends SNR
+
+            # 
+        return 
 
     def plot(self, ax, plot_param, plot_kwargs={"avg": {}, "std": {}, "truth": {}}, x_values=None):
-        if plot_param not in self.interest_params:
+        if plot_param not in self.injection_parameters.columns:
             raise Exception(
                 f"{plot_param} not in self.interest_params = {self.interest_params}"
             )
@@ -281,10 +311,10 @@ class Bias1D(Bias):
         if x_values is None:
             x_values = {
                 "name": self.param_names[0],
-                "array": [i[0] for i in self.posterior_list.data_dict.keys()]
+                "array": [i[0] for i in self.posterior_list.master_dict.keys()]
             }
-        ax.set_xlabel(x_values["name"])
-        ax.set_ylabel(plot_param)
+
+        # getting average and std of the posterior distributions
         avg = np.array(
             [
                 self.posterior_list.get_mean(idx)[plot_param]
@@ -298,8 +328,13 @@ class Bias1D(Bias):
             ]
         )
         truth = [self.posterior_list[i]["truth"][plot_param] for i in range(len(x_values["array"]))]
-        ax.plot(x_values["array"], avg, label=r"SEOBNRv4HM_ROM $\pm 1 \sigma$", **plot_kwargs["avg"])
+
+        # setting plot properties
+        ax.set_xlabel(x_values["name"])
+        ax.set_ylabel(plot_param)
+        ax.plot(x_values["array"], avg, **plot_kwargs["avg"])
         ax.fill_between(x_values["array"], avg - std, avg + std, alpha=0.5, **plot_kwargs["std"])
+
         out = ax.plot(x_values["array"], truth, label="Truth", **plot_kwargs["truth"])
         return out
 
@@ -347,7 +382,7 @@ class Bias1D(Bias):
         if x_values is None:
             x_values = {
                 "name": self.param_names[0],
-                "array": [i[0] for i in self.posterior_list.data_dict.keys()]
+                "array": [i[0] for i in self.posterior_list.master_dict.keys()]
             }
         num_plots = str(int(len(fig.axes) ** 0.5))
         sweep_ax = fig.add_subplot(int(num_plots*3))
@@ -401,40 +436,58 @@ class Bias2D(Bias):
         self._injection_parameters[param2["name"]] = param2_arr
         self.injection_parameters = self._injection_parameters
 
-    def sweep(self, num_samples, batch_size, num_avg_points, interest_params):
-        self.interest_params = interest_params
+    def sweep(self, template_fpath):
+        """ 
+        Parameters
+        ----------
+        template_fpath : str
+            Path to dingo_pipe template. Should be a .ini file which speficies how to
+            inject.
+
+        """
+
         self.posterior_list = PosteriorList()
         for idx in self.injection_parameters.index:
+            # injection parameter on the grid
             var = (
                 self.injection_parameters[self.param1["name"]][idx],
                 self.injection_parameters[self.param2["name"]][idx],
             )
             self.posterior_list.append_var(var)
-            truth = {k: self.injection_parameters.iloc[idx][k] for k in interest_params}
-            self.posterior_list.append_truth(var, truth)
+            self.posterior_list.append_truth(var, convert(self.injection_parameters))
 
-            for _ in range(num_avg_points):
-                strain_data = self.injection_generator.injection(
-                    self.injection_parameters.iloc[idx]
-                )
-                self.sampler.context = strain_data.copy()
-                self.sampler.run_sampler(
-                    num_samples=num_samples,
-                    batch_size=batch_size,
-                )
-                _, _, network_snr = get_snr(
-                    self.domain,
-                    self.injection_generator.asd,
-                    self.injection_generator.signal(
-                        self.injection_parameters.iloc[idx]
-                    ),
-                )
-                self.posterior_list.append_snr(var, network_snr)
-                self.recalculate_params()
-                self.posterior_list.append_posterior(
-                    var,
-                    {k: self.sampler.samples[k].to_numpy() for k in interest_params},
-                )
+            # edting the template file
+
+
+            # loading up the result 
+            # result = Result(file_name=)
+
+            _, _, network_snr = get_snr(
+                self.domain,
+                self.injection_generator.asd,
+                self.injection_generator.signal(self.injection_parameters.iloc[idx]),
+            )
+            self.posterior_list.append_snr(var, self.domain, network_snr)
+            self.posterior_list.append_posterior(var, convert(result.samples))
+
+            # for _ in range(num_avg_points):
+                # if local:
+                    # strain_data = self.injection_generator.injection(
+                        # self.injection_parameters.iloc[idx]
+                    # )
+                    # self.sampler.context = strain_data.copy()
+                    # self.sampler.run_sampler(
+                        # num_samples=settings["num_samples"],
+                        # batch_size=settings["batch_size"],
+                    # )
+                    # _, _, network_snr = get_snr(
+                        # self.domain,
+                        # self.injection_generator.asd,
+                        # self.injection_generator.signal(
+                            # self.injection_parameters.iloc[idx]
+                        # ),
+                    # )
+                # else:
 
     def plot(self, ax, plot_param, mode="average", plot_type="pcolormesh", **kwargs):
         if plot_param not in self.interest_params:
@@ -443,7 +496,8 @@ class Bias2D(Bias):
             )
         ax.set_xlabel(self.param1["name"])
         ax.set_ylabel(self.param2["name"])
-        x = np.array(list(self.posterior_list.data_dict.keys()))
+        x = np.array(list(self.posterior_list.master_dict.keys()))
+
         if mode == "average":
             avg = np.array(
                 [
