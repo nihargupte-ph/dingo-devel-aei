@@ -7,6 +7,7 @@ import pandas as pd
 import glob
 import subprocess
 import re 
+import json
 
 import bilby
 import scipy
@@ -49,6 +50,15 @@ def get_snr(domain, asd, strain_data, duration=8.0):
     return snrs, freq_snr_squared, network_snr
 
 
+def find_file_with_suffix(folder_path, file_suffix):
+    search_pattern = os.path.join(folder_path, f'*{file_suffix}')
+    matching_files = glob.glob(search_pattern)
+
+    if matching_files:
+        return matching_files[0]
+    else:
+        return None
+
 def find_files_with_extension(directory, extension):
     pattern = os.path.join(directory, f"*.{extension}")
     matching_files = glob.glob(pattern)
@@ -60,99 +70,99 @@ class PosteriorList:
     the injected value and the recovered posterior samples 
     """
     def __init__(self):
-        self.mast_dict = {}
+        self.master_dict = {}
 
     def append_var(self, var):
-        self.mast_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None}
+        self.master_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None}
 
     def append_posterior(self, var, new_posterior):
-        if self.mast_dict[var]["posteriors"] == None:
-            self.mast_dict[var]["posteriors"] = {
-                k: v.reshape(1, -1) for k, v in new_posterior.items()
-            }
-        else:
-            for k in self.mast_dict[var]["posteriors"].keys():
-                posterior = np.concatenate(
-                    [
-                        self.mast_dict[var]["posteriors"][k],
-                        new_posterior[k].reshape(1, -1),
-                    ],
-                    axis=0,
-                )
-                self.mast_dict[var]["posteriors"][k] = posterior
+        if isinstance(new_posterior, pd.DataFrame) or isinstance(new_posterior, pd.Series):
+            new_posterior = new_posterior.to_dict("list")
+        
+        # commented because slow
+        # self.master_dict[var]["posteriors"] = pd.DataFrame(convert(new_posterior))
+        self.master_dict[var]["posteriors"] = pd.DataFrame(new_posterior)
 
     def append_truth(self, var, truth):
-        self.mast_dict[var]["truth"] = convert(truth)
+        if isinstance(truth, pd.DataFrame) or isinstance(truth, pd.Series):
+            truth = truth.to_dict()
+        self.master_dict[var]["truth"] = pd.DataFrame(convert(truth))
 
     def append_snr(self, var, snr):
-        if self.mast_dict[var]["snr"] == None:
-            self.mast_dict[var]["snr"] = [snr]
-        else:
-            self.mast_dict[var]["snr"] = self.mast_dict[var]["snr"] + [snr]
-        
+        self.master_dict[var]["snr"] = snr
+
     def append_ess(self, var, ess, sample_efficiency):
-        self.mast_dict[var] = {
+        self.master_dict[var]["ess"] = {
             "effective_sample_size": ess,
             "sample_efficiency": sample_efficiency
         }
 
-    def __getitem__(self, idx, conflation=False):
-        return self.mast_dict[list(self.mast_dict.keys())[idx]]
+    def __getitem__(self, idx):
+        var = list(self.master_dict.keys())[idx]
+        return self.get_item_var(var)
 
+    def get_item_var(self, var):
+        return self.master_dict[var]
+    
     def get_mean(self, idx):
-        posteriors = self.__getitem__(idx)["posteriors"]
-        ret = {k: v.flatten().mean() for k, v in posteriors.items()}
+        posterior = self[idx]["posteriors"]
+        ret = posterior.mean()
         return ret
 
     def get_median(self, idx):
-        posteriors = self.__getitem__(idx)["posteriors"]
-        ret = {k: np.median(v.flatten()) for k, v in posteriors.items()}
+        posterior = self[idx]["posteriors"]
+        ret = posterior.median()
         return ret
 
-
     def get_std(self, idx):
-        posteriors = self.__getitem__(idx)["posteriors"]
-        ret = {k: v.flatten().std() for k, v in posteriors.items()}
+        posterior = self[idx]["posteriors"]
+        ret = posterior.std()
+        return ret
+
+    def get_interval(self, idx, interval=0.9):
+        samples = self[idx]["posteriors"] 
+
+        # Generating 90% interval
+        unnorm_prob = samples["log_likelihood"] + samples["log_prior"]
+        log_prob_sum = np.logaddexp.reduce(unnorm_prob)
+        log_prob_target = unnorm_prob - log_prob_sum
+        samples["log_prob_target"] = log_prob_target
+        samples = samples.sort_values("log_prob_target")
+        log_cdf = np.logaddexp.accumulate(log_prob_target)
+        n_cutoff = np.searchsorted(log_cdf, np.log(1 - interval))
+        interval_samples = samples.iloc[n_cutoff:]
+        ret = interval_samples.agg(['min','max'])
         return ret
 
     def __len__(self):
-        return len(self.mast_dict)
+        return len(self.master_dict)
 
     @property
     def index_vars(self):
-        return list(self.mast_dict.keys())
+        return list(self.master_dict.keys())
 
 
 class Bias(ABC):
-    def __init__(self, sampler_settings, injection_generator, _injection_parameters):
+    def __init__(self, sampler_settings, _injection_parameters):
         self.sampler_settings = sampler_settings
-
-        # initializing GNPE samplers 
-        main_pm = PosteriorModel(model_filename=sampler_settings["model_fpath"], device=sampler_settings["device"])
-        init_pm = PosteriorModel(model_filename=sampler_settings["model_init_fpath"], device=sampler_settings["device"])
-        init_sampler = GWSampler(model=init_pm)
-        sampler = GWSamplerGNPE(model=main_pm, init_sampler=init_sampler, num_iterations=sampler_settings["num_gnpe_iterations"])
-
-        # settings sampler and domain
-        self.sampler = sampler
-        self.domain = build_domain_from_model_metadata(sampler.model.metadata)
-        self.injection_generator = injection_generator
         self.injection_parameters = _injection_parameters
 
     @property
     def injection_parameters(self):
         # There are additional injection parameters which can be derived
-        ret = pd.DataFrame(convert(self._injection_parameters))
+        ret = pd.DataFrame(convert(self._injection_parameters.to_dict("list")))
         return ret
 
     @injection_parameters.setter
     def injection_parameters(self, _injection_parameters):
-        self._injection_parameters = _injection_parameters
-        self._injection_parameters = {
-            k: v * np.ones(self.length) for k, v in self._injection_parameters.items()
-        }
+        if isinstance(_injection_parameters, dict):
+            self._injection_parameters = pd.DataFrame({
+                k: v * np.ones(self.length) for k, v in _injection_parameters.items()
+            })
+        else:
+            self._injection_parameters = _injection_parameters
 
-    def check_prior(self, params):
+    def check_prior(self, sweep_params):
         raise NotImplementedError
         # NOTE NOTE NOTE this function is BROKEN RIGHT NOW NOT EVEN CHECKING PRIORS!
         tmp_result = self.sampler.to_result()
@@ -193,32 +203,90 @@ class Bias(ABC):
             rescaled_injection_parameters["luminosity_distance"][idx] = res.x
         self._injection_parameters = rescaled_injection_parameters
 
-
-class Bias1D(Bias):
-    def __init__(self, sampler, injection_generator, params, injection_parameters):
+    def from_folder(self, load_dir):
         """ 
         Parameters
         ----------
-        sampler : dingo.gw.inference.gw_samplers.GWSamplerGNPE or dingo.gw.inference.gw_samplers.GWSampler  
-            Sampler to use when analyzing the event
+        load_dir : str 
+            Directory which contains all importance sampled results 
+        """
+        
+        # loading saved injection from folder  
+        self.injection_parameters = pd.read_csv(os.path.join(load_dir, "injection_parameters.csv"))
+        with open(os.path.join(load_dir, "sampler_settings.json"), 'r') as fp:
+            self.sampler_settings = json.load(fp)
+
+        if len(self.sweep_params) != len(self.injection_parameters):
+            raise ValueError("Length of sweep array is not the same as the number of injections")
+
+        # iterating through injection parameters and generating posterior list
+        self.posterior_list = PosteriorList()
+        for idx in range(self.length):
+            result_dir = os.path.join(load_dir, f"outdir_{idx}", "result")
+            file = find_file_with_suffix(result_dir, "importance_sampling.hdf5")
+            result = Result(file_name=os.path.join(result_dir, file))
+
+            # add check here to make sure stored injection is same as self.injection_parameters
+
+            # Record the sweep array value for each posterior, this serves as a key
+            var = tuple(self.sweep_params.iloc[idx])
+            self.posterior_list.append_var(var)
+
+            # appending truth values
+            self.posterior_list.append_truth(var, self.injection_parameters.iloc[idx])
+
+            # appending posterior 
+            self.posterior_list.append_posterior(var, result.pesummary_samples)
+
+            # appending effective sample size
+            self.posterior_list.append_ess(var, result.effective_sample_size, result.sample_efficiency)
+
+            # TODO add method which appends SNR
+
+            # add method which appends fisher information
+
+
+class Bias1D(Bias):
+    def __init__(self, load_dir = None, sweep_params = None, injection_parameters = None, sampler_settings = None):
+        """ 
+        Parameters
+        ----------
+        load_dir : str
+            Folder from which to load the bias object
+        sweep_params : pd.DataFrame
+            DataFrame of values over which to sweep when generating injections
+        injection_parameters : pd.DataFrame
+            Injection parameters for which to evaluate the injections
+        sampler_settings : dict
+            Sampler settings. Should settings used for the sweep
          
         """
-
-        if len(np.unique([sa.shape for sa in params.values()])) == 1:
-            self.length = list(params.values())[0].shape[0]
+        if load_dir is not None:
+            self.from_folder(load_dir)
         else:
-            raise Exception("Sweep arrays should all be the same shape")
-        super().__init__(sampler, injection_generator, injection_parameters)
-        self.param_names = list(params.keys())
-        self.params = params
-        # self.check_prior(self.params)
+            self.length = len(sweep_params)
+            super().__init__(sampler_settings, injection_parameters)
+            self.sweep_param_names = list(sweep_params.columns)
+            self.sweep_params = sweep_params
+            # self.check_prior(self.params)
 
-        # defining injection parameters to iterate through
-        for param_name, sweep_array in self.params.items():
-            self._injection_parameters[param_name] = sweep_array
+            # defining injection parameters to iterate through
+            new_df = self.injection_parameters
+            new_df[self.sweep_params.columns] = self.sweep_params[self.sweep_params.columns]
+            self.injection_parameters = new_df
 
-    def from_folder(self):
-        pass
+    def from_folder(self, load_dir):
+        """ 
+        Parameters
+        ----------
+        load_dir : str
+            Folder from which to load the bias object
+         
+        """
+        self.sweep_params = pd.read_csv(os.path.join(load_dir, "sweep_params.csv"))
+        self.sweep_param_names = list(self.sweep_params.columns)
+        self.length = len(self.sweep_params)
+        return super().from_folder(load_dir)
 
     def sweep(self, template_fpath, outdir):
         """ 
@@ -228,8 +296,13 @@ class Bias1D(Bias):
             Path to a .ini file used by dingo pipe. These settings will be
             used to analyze the injection
         """
+        # saving 
+
         # saving injection parameters for sweep 
-        self.injection_parameters.to_csv(os.path.join(outdir, "injection_parameters.csv"))
+        self.injection_parameters.to_csv(os.path.join(outdir, "injection_parameters.csv"), index=False)
+        self.sweep_params.to_csv(os.path.join(outdir, "sweep_params.csv"), index=False)
+        with open(os.path.join(outdir, "sampler_settings.json"), 'w') as f:
+            json.dump(self.sampler_settings, f)
 
         # Iterate through the injection parameters and for each one generate a posterior
         for idx in self.injection_parameters.index:
@@ -264,78 +337,38 @@ class Bias1D(Bias):
             command = ["condor_submit_dag", "-f", f"{outdir}/outdir_{idx}/submit/dag_{idx}.submit"]
             output = subprocess.check_output(command, cwd=outdir)
 
-    def load_posterior_list(self, load_dir):
-        """ 
-        Parameters
-        ----------
-        load_dir : str 
-            Directory which contains all importance sampled results 
-        """
-        # check that the injection parameters are the same as what is currently stored
-        saved_injection_parameters = pd.read_csv(os.path.join(load_dir, "injection_parameters.csv"))
-        if not self.injection_parameters.equals(saved_injection_parameters):
-            raise ValueError("Saved injection parameters are not the same as loaded injection parameters")
+        # TODO add a method here which optionally hangs until all dags have finished running
 
-        self.posterior_list = PosteriorList()
+    def plot(self, ax, plot_param, plot_kwargs={"line": {}, "fill": {}, "truth": {}}, interval=0.9, x_values=None):
 
-        for idx in self.injection_parameters.index:
-            result = Result(file_name=os.path.join(load_dir, f"outdir_{idx}", "result", "???"))
-
-            # add check here to make sure stored injection is same as self.injection_parameters
-
-            # Record the sweep array value for each posterior, this serves as a key
-            var = tuple([self.injection_parameters[n][idx] for n in self.param_names])
-            self.posterior_list.append_var(var)
-
-            # appending truth values
-            self.posterior_list.append_truth(var, self.injection_parameters.iloc[idx])
-
-            # appending posterior 
-            self.posterior_list.append_posterior(var, pd.DataFrame(convert(result.samples)))
-
-            # appending effective sample size
-            self.posterior_list.append_ess(var, result.effective_sample_size, result.sample_efficiency)
-
-            # TODO add method which appends SNR
-
-            # 
-        return 
-
-    def plot(self, ax, plot_param, plot_kwargs={"avg": {}, "std": {}, "truth": {}}, x_values=None):
-        if plot_param not in self.injection_parameters.columns:
-            raise Exception(
-                f"{plot_param} not in self.interest_params = {self.interest_params}"
-            )
-        
         # Adding a the sweep parameter on a line 
         if x_values is None:
             x_values = {
-                "name": self.param_names[0],
+                "name": self.sweep_param_names[0],
                 "array": [i[0] for i in self.posterior_list.master_dict.keys()]
             }
 
-        # getting average and std of the posterior distributions
-        avg = np.array(
-            [
-                self.posterior_list.get_mean(idx)[plot_param]
-                for idx in range(len(self.posterior_list))
-            ]
-        )
-        std = np.array(
-            [
-                self.posterior_list.get_std(idx)[plot_param]
-                for idx in range(len(self.posterior_list))
-            ]
-        )
-        truth = [self.posterior_list[i]["truth"][plot_param] for i in range(len(x_values["array"]))]
+        if plot_param == "effective_sample_size" or plot_param == "sample_efficiency":
+            # plotting ess numbers
+            plot = np.array([self.posterior_list[idx]["ess"][plot_param] for idx in range(self.length)])
+            out = ax.plot(x_values["array"], plot, **plot_kwargs["line"])
 
-        # setting plot properties
+        else:
+            # getting average and intervals of the posterior distributions
+            avg = np.array([self.posterior_list.get_mean(idx)[plot_param] for idx in range(self.length)])
+            interval = np.array([self.posterior_list.get_interval(idx, interval=interval)[plot_param] for idx in range(self.length)])
+            truth = np.array([self.posterior_list[idx]["truth"][plot_param] for idx in range(self.length)])
+
+            # setting plot properties
+            ax.set_xlabel(x_values["name"])
+            ax.set_ylabel(plot_param)
+            ax.plot(x_values["array"], avg, **plot_kwargs["line"])
+            ax.fill_between(x_values["array"], interval[:, 0], interval[:, 1], alpha=0.5, **plot_kwargs["fill"])
+
+            out = ax.plot(x_values["array"], truth, label="Truth", **plot_kwargs["truth"])
+
         ax.set_xlabel(x_values["name"])
         ax.set_ylabel(plot_param)
-        ax.plot(x_values["array"], avg, **plot_kwargs["avg"])
-        ax.fill_between(x_values["array"], avg - std, avg + std, alpha=0.5, **plot_kwargs["std"])
-
-        out = ax.plot(x_values["array"], truth, label="Truth", **plot_kwargs["truth"])
         return out
 
     def save_frame(self, idx, fpath, x_values=None, **kwargs):
