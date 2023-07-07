@@ -233,7 +233,7 @@ class Bias(ABC):
             result = Result(file_name=os.path.join(result_dir, file))
 
             # Record the sweep array value for each posterior, this serves as a key
-            var = tuple(self.sweep_params.iloc[idx])
+            var = tuple(self.injection_parameters.iloc[idx][self.sweep_param_names])
             self.posterior_list.append_var(var)
 
             # appending truth values
@@ -506,12 +506,15 @@ class Bias2D(Bias):
         x = self.posterior_list.keys_array
 
         if plot_param == "effective_sample_size" or plot_param == "sample_efficiency":
-            Z = [self[i]["ess"][plot_param] for i in range(self.length)]
+            Z = np.array([self.posterior_list[i]["ess"][plot_param] for i in range(self.length)])
+            norm = colors.Normalize(vmin=Z.min(), vmax=Z.max())
 
         elif plot_param == "kl_divergence" or plot_param == "kl_divergence_variance":
-            Z = [self[i]["kl"][plot_param] for i in range(self.length)]
+            Z = np.array([self.posterior_list[i]["kl"][plot_param] for i in range(self.length)])
+            norm = colors.Normalize(vmin=Z.min(), vmax=Z.max())
 
         elif mode == "average":
+            norm = colors.TwoSlopeNorm(vmin=Z.min(), vcenter=0, vmax=Z.max())
             pass
 
         elif mode == "median":
@@ -533,8 +536,7 @@ class Bias2D(Bias):
             XX = np.reshape(X, (xl, xl))
             YY = np.reshape(Y, (yl, yl))
             ZZ = np.reshape(Z, (xl, yl))     
-            divnorm = colors.TwoSlopeNorm(vmin=ZZ.min(), vcenter=0, vmax=ZZ.max())
-            out = ax.pcolormesh(XX, YY, ZZ, norm=divnorm, **kwargs)
+            out = ax.pcolormesh(XX, YY, ZZ, norm=norm, **kwargs)
         elif plot_type == "tricontourf":
             out = ax.tricontourf(X, Y, Z, **kwargs)
         else:
