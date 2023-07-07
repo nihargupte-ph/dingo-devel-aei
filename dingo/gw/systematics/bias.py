@@ -73,7 +73,7 @@ class PosteriorList:
         self.master_dict = {}
 
     def append_var(self, var):
-        self.master_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None}
+        self.master_dict[var] = {"truth": None, "posteriors": None, "snr": None, "ess": None, "kl": None}
 
     def append_posterior(self, var, new_posterior):
         if isinstance(new_posterior, pd.DataFrame) or isinstance(new_posterior, pd.Series):
@@ -96,6 +96,9 @@ class PosteriorList:
             "effective_sample_size": ess,
             "sample_efficiency": sample_efficiency
         }
+
+    def append_kl_divergence(self, var, kl_divergence, kl_divergence_variance):
+        self.master_dict[var]["kl"] = {"kl_divergence": kl_divergence, "kl_divergence_variance": kl_divergence_variance}
 
     def __getitem__(self, idx):
         var = list(self.master_dict.keys())[idx]
@@ -137,6 +140,10 @@ class PosteriorList:
     def __len__(self):
         return len(self.master_dict)
 
+    @property 
+    def keys_array(self):
+        return np.array(list(self.master_dict.keys()))
+
     @property
     def index_vars(self):
         return list(self.master_dict.keys())
@@ -155,6 +162,7 @@ class Bias(ABC):
 
     @injection_parameters.setter
     def injection_parameters(self, _injection_parameters):
+        # TODO implement arbitrary parameters that transform
         if isinstance(_injection_parameters, dict):
             self._injection_parameters = pd.DataFrame({
                 k: v * np.ones(self.length) for k, v in _injection_parameters.items()
@@ -216,8 +224,6 @@ class Bias(ABC):
         with open(os.path.join(load_dir, "sampler_settings.json"), 'r') as fp:
             self.sampler_settings = json.load(fp)
 
-        if len(self.sweep_params) != len(self.injection_parameters):
-            raise ValueError("Length of sweep array is not the same as the number of injections")
 
         # iterating through injection parameters and generating posterior list
         self.posterior_list = PosteriorList()
@@ -225,8 +231,6 @@ class Bias(ABC):
             result_dir = os.path.join(load_dir, f"outdir_{idx}", "result")
             file = find_file_with_suffix(result_dir, "importance_sampling.hdf5")
             result = Result(file_name=os.path.join(result_dir, file))
-
-            # add check here to make sure stored injection is same as self.injection_parameters
 
             # Record the sweep array value for each posterior, this serves as a key
             var = tuple(self.sweep_params.iloc[idx])
@@ -241,9 +245,64 @@ class Bias(ABC):
             # appending effective sample size
             self.posterior_list.append_ess(var, result.effective_sample_size, result.sample_efficiency)
 
+            # appending KL divergence between proposal and true posterior
+            w = result.samples["weights"]
+            kl_divergence = np.mean(w * np.log(w))
+            kl_divergence_variance = np.mean((w ** 2) * (np.log(w) ** 2)) - (kl_divergence ** 2)
+            self.posterior_list.append_kl_divergence(var, kl_divergence, kl_divergence_variance)
             # TODO add method which appends SNR
 
             # add method which appends fisher information
+
+    def sweep(self, template_fpath, outdir):
+        """ 
+        Parameters
+        ----------
+        template_fpath : str
+            Path to a .ini file used by dingo pipe. These settings will be
+            used to analyze the injection
+        """
+
+        # saving injection parameters for sweep 
+        self.injection_parameters.to_csv(os.path.join(outdir, "injection_parameters.csv"), index=False)
+        self.sweep_params.to_csv(os.path.join(outdir, "sweep_params.csv"), index=False)
+        with open(os.path.join(outdir, "sampler_settings.json"), 'w') as f:
+            json.dump(self.sampler_settings, f)
+
+        # Iterate through the injection parameters and for each one generate a posterior
+        for idx in self.injection_parameters.index:
+            # Step 1: open the .ini file 
+            with open(template_fpath, "r") as file:
+                lines = file.readlines()
+
+            # Step 2: Write to a new fpath 
+            # TODO add a means to take the properties of the injection_generator and adjust
+            # the ini file to match them
+            new_fpath = os.path.join(outdir, f"{str(idx)}.ini")
+            with open(new_fpath, "w+") as file:
+                for line in lines:
+                    if line.startswith("injection-dict"):
+                        file.write(line.replace("_injection_dict", str(self.injection_parameters.iloc[idx].to_dict())))
+                    elif line.startswith("label"):
+                        file.write(line.replace("_label", str(idx)))
+                    elif line.startswith("model-init"):
+                        file.write(line.replace("_model_init.pt", self.sampler_settings["model_init_fpath"]))
+                    elif line.startswith("model"):
+                        file.write(line.replace("_model.pt", self.sampler_settings["model_fpath"]))
+                    elif line.startswith("outdir"):
+                        file.write(line.replace("_./outdir", f"./outdir_{str(idx)}"))
+                    else:
+                        file.write(line)
+            
+            # pipe the ini file
+            command = ["dingo_pipe", new_fpath, "--local-generation"]
+            output = subprocess.check_output(command, cwd=os.path.join(outdir))
+
+            # submit the ini file
+            command = ["condor_submit_dag", "-f", f"{outdir}/outdir_{idx}/submit/dag_{idx}.submit"]
+            output = subprocess.check_output(command, cwd=outdir)
+
+        # TODO add a method here which optionally hangs until all dags have finished running
 
 
 class Bias1D(Bias):
@@ -287,57 +346,6 @@ class Bias1D(Bias):
         self.sweep_param_names = list(self.sweep_params.columns)
         self.length = len(self.sweep_params)
         return super().from_folder(load_dir)
-
-    def sweep(self, template_fpath, outdir):
-        """ 
-        Parameters
-        ----------
-        template_fpath : str
-            Path to a .ini file used by dingo pipe. These settings will be
-            used to analyze the injection
-        """
-        # saving 
-
-        # saving injection parameters for sweep 
-        self.injection_parameters.to_csv(os.path.join(outdir, "injection_parameters.csv"), index=False)
-        self.sweep_params.to_csv(os.path.join(outdir, "sweep_params.csv"), index=False)
-        with open(os.path.join(outdir, "sampler_settings.json"), 'w') as f:
-            json.dump(self.sampler_settings, f)
-
-        # Iterate through the injection parameters and for each one generate a posterior
-        for idx in self.injection_parameters.index:
-            # Step 1: open the .ini file 
-            with open(template_fpath, "r") as file:
-                lines = file.readlines()
-
-            # Step 2: Write to a new fpath 
-            # TODO add a means to take the properties of the injection_generator and adjust
-            # the ini file to match them
-            new_fpath = os.path.join(outdir, f"{str(idx)}.ini")
-            with open(new_fpath, "w+") as file:
-                for line in lines:
-                    if line.startswith("injection-dict"):
-                        file.write(line.replace("_injection_dict", str(self.injection_parameters.iloc[idx].to_dict())))
-                    elif line.startswith("label"):
-                        file.write(line.replace("_label", str(idx)))
-                    elif line.startswith("model-init"):
-                        file.write(line.replace("_model_init.pt", self.sampler_settings["model_init_fpath"]))
-                    elif line.startswith("model"):
-                        file.write(line.replace("_model.pt", self.sampler_settings["model_fpath"]))
-                    elif line.startswith("outdir"):
-                        file.write(line.replace("_./outdir", f"./outdir_{str(idx)}"))
-                    else:
-                        file.write(line)
-            
-            # pipe the ini file
-            command = ["dingo_pipe", new_fpath, "--local-generation"]
-            output = subprocess.check_output(command, cwd=os.path.join(outdir))
-
-            # submit the ini file
-            command = ["condor_submit_dag", "-f", f"{outdir}/outdir_{idx}/submit/dag_{idx}.submit"]
-            output = subprocess.check_output(command, cwd=outdir)
-
-        # TODO add a method here which optionally hangs until all dags have finished running
 
     def plot(self, ax, plot_param, plot_kwargs={"line": {}, "fill": {}, "truth": {}}, interval=0.9, x_values=None):
 
@@ -447,142 +455,81 @@ class Bias1D(Bias):
 
 class Bias2D(Bias):
     def __init__(
-        self, sampler, injection_generator, param1, param2, injection_parameters
+        self, load_dir=None, sweep_params=None, injection_parameters=None, sampler_settings=None,
     ):
-        self.length = (
-            param1["sweep_array"].shape[0] * param2["sweep_array"].shape[0]
-        )  # Technically this should be an abstract property but FIXME
-        super().__init__(sampler, injection_generator, injection_parameters)
-        self.param1 = param1
-        self.param2 = param2
-        check_params = {
-            param1["name"]: param1["sweep_array"],
-            param2["name"]: param2["sweep_array"]
-        }
-        self.check_prior(check_params)
-
-        param1_arr, param2_arr = np.meshgrid(
-            param1["sweep_array"], param2["sweep_array"]
-        )
-        param1_arr, param2_arr = param1_arr.flatten(), param2_arr.flatten()
-        self._injection_parameters[param1["name"]] = param1_arr
-        self._injection_parameters[param2["name"]] = param2_arr
-        self.injection_parameters = self._injection_parameters
-
-    def sweep(self, template_fpath):
         """ 
         Parameters
         ----------
-        template_fpath : str
-            Path to dingo_pipe template. Should be a .ini file which speficies how to
-            inject.
-
+        load_dir : str
+            Folder from which to load the bias object
+        sweep_params : pd.DataFrame
+            DataFrame of values over which to sweep when generating injections. Will create a
+            grid according to the first two columns
+        injection_parameters : pd.DataFrame
+            Injection parameters for which to evaluate the injection 
+        sampler_settings : dict 
+            Dict of settings for the sampler
         """
+        if load_dir is not None:
+            self.from_folder(load_dir)
+        else:
+            self.length = len(sweep_params) ** 2
+            super().__init__(sampler_settings, injection_parameters)
+            self.sweep_params = sweep_params
+            # self.check_prior(check_params)
 
-        self.posterior_list = PosteriorList()
-        for idx in self.injection_parameters.index:
-            # injection parameter on the grid
-            var = (
-                self.injection_parameters[self.param1["name"]][idx],
-                self.injection_parameters[self.param2["name"]][idx],
-            )
-            self.posterior_list.append_var(var)
-            self.posterior_list.append_truth(var, convert(self.injection_parameters))
+            param1_arr, param2_arr = np.meshgrid(self.sweep_params.iloc[:, 0], self.sweep_params.iloc[:, 1])
+            param1_arr, param2_arr = param1_arr.flatten(), param2_arr.flatten()
 
-            # edting the template file
+            new_df = self.injection_parameters
+            new_df[self.sweep_params.columns[0]] = param1_arr
+            new_df[self.sweep_params.columns[1]] = param2_arr
+            self.injection_parameters = new_df
 
-
-            # loading up the result 
-            # result = Result(file_name=)
-
-            _, _, network_snr = get_snr(
-                self.domain,
-                self.injection_generator.asd,
-                self.injection_generator.signal(self.injection_parameters.iloc[idx]),
-            )
-            self.posterior_list.append_snr(var, self.domain, network_snr)
-            self.posterior_list.append_posterior(var, convert(result.samples))
-
-            # for _ in range(num_avg_points):
-                # if local:
-                    # strain_data = self.injection_generator.injection(
-                        # self.injection_parameters.iloc[idx]
-                    # )
-                    # self.sampler.context = strain_data.copy()
-                    # self.sampler.run_sampler(
-                        # num_samples=settings["num_samples"],
-                        # batch_size=settings["batch_size"],
-                    # )
-                    # _, _, network_snr = get_snr(
-                        # self.domain,
-                        # self.injection_generator.asd,
-                        # self.injection_generator.signal(
-                            # self.injection_parameters.iloc[idx]
-                        # ),
-                    # )
-                # else:
+    def from_folder(self, load_dir):
+        """ 
+        Parameters
+        ----------
+        load_dir : str
+            Folder from which to load the bias object
+         
+        """
+        # assert keys of sweep and injections are the sam
+        self.sweep_params = pd.read_csv(os.path.join(load_dir, "sweep_params.csv"))
+        self.sweep_param_names = list(self.sweep_params.columns)
+        self.length = len(self.sweep_params) ** 2
+        return super().from_folder(load_dir)
 
     def plot(self, ax, plot_param, mode="average", plot_type="pcolormesh", **kwargs):
-        if plot_param not in self.interest_params:
-            raise Exception(
-                f"{plot_param} not in self.interest_params = {self.interest_params}"
-            )
-        ax.set_xlabel(self.param1["name"])
-        ax.set_ylabel(self.param2["name"])
-        x = np.array(list(self.posterior_list.master_dict.keys()))
+        ax.set_xlabel(self.sweep_params.columns[0])
+        ax.set_ylabel(self.sweep_params.columns[1])
+        x = self.posterior_list.keys_array
 
-        if mode == "average":
-            avg = np.array(
-                [
-                    self.posterior_list.get_mean(idx)[plot_param]
-                    for idx in range(len(self.posterior_list))
-                ]
-            )
-            truth = np.array(
-                [self.posterior_list[i]["truth"][plot_param] for i in range(x.shape[0])]
-            )
-            Z = avg - truth
+        if plot_param == "effective_sample_size" or plot_param == "sample_efficiency":
+            Z = [self[i]["ess"][plot_param] for i in range(self.length)]
+
+        elif plot_param == "kl_divergence" or plot_param == "kl_divergence_variance":
+            Z = [self[i]["kl"][plot_param] for i in range(self.length)]
+
+        elif mode == "average":
+            pass
 
         elif mode == "median":
-            avg = np.array(
-                [
-                    self.posterior_list.get_median(idx)[plot_param]
-                    for idx in range(len(self.posterior_list))
-                ]
-            )
-            truth = np.array(
-                [self.posterior_list[i]["truth"][plot_param] for i in range(x.shape[0])]
-            )
-            Z = avg - truth
+            pass 
 
-        elif mode == "variance":
-            std = np.array(
-                [
-                    self.posterior_list.get_std(idx)[plot_param]
-                    for idx in range(len(self.posterior_list))
-                ]
-            )
-            Z = std
+        elif mode == "maxL":
+            pass
 
-        elif mode == "mode":
-            mode = np.array(
-                [
-                    scipy.stats.mode(self.posterior_list[idx]["posteriors"][plot_param])
-                    for idx in range(len(self.posterior_list))
-                ]
-            )
-            truth = np.array(
-                [self.posterior_list[i]["truth"][plot_param] for i in range(x.shape[0])]
-            )
-            Z = mode - truth
+        elif mode == "interval":
+            pass
 
         else:
             raise Exception("Allowed modes are 'average', 'median', 'mode' and 'variance'")
 
         X, Y = x[:, 0], x[:, 1]
         if plot_type == "pcolormesh":
-            xl = int(X.shape[0] / self.param1["sweep_array"].shape[0])
-            yl = int(Y.shape[0] / self.param2["sweep_array"].shape[0])
+            xl = int(X.shape[0] / len(self.sweep_params))
+            yl = int(Y.shape[0] / len(self.sweep_params))
             XX = np.reshape(X, (xl, xl))
             YY = np.reshape(Y, (yl, yl))
             ZZ = np.reshape(Z, (xl, yl))     

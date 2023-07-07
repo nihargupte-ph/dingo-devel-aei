@@ -562,9 +562,9 @@ class Result(CoreResult):
         ].get("spin_conversion_phase")
 
         # Redefine phase parameter to be consistent with Bilby. COMMENTED BECAUSE SLOW
-        samples = change_spin_conversion_phase(
-            samples, self.f_ref, spin_conversion_phase_old, None
-        )
+        # samples = change_spin_conversion_phase(
+            # samples, self.f_ref, spin_conversion_phase_old, None
+        # )
 
         return samples
 
