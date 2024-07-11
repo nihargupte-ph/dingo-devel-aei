@@ -1,9 +1,15 @@
 from functools import partial
+import os
+import jax.scipy.optimize
 import numpy as np
 from bilby.gw.detector import InterferometerList
 from torchvision.transforms import Compose
 import pandas as pd
 from bilby.gw.prior import BBHPriorDict
+import subprocess
+import inspect
+import jax
+import jax.numpy as jnp
 
 from dingo.gw.noise.asd_dataset import ASDDataset
 from dingo.gw.domains import (
@@ -15,6 +21,7 @@ from dingo.gw.gwutils import (
     get_extrinsic_prior_dict,
     get_intrinsic_prior_dict,
     fill_missing_available_parameters,
+    source_frame_masses_to_detector_frame_masses
 )
 from dingo.gw.prior import build_prior_with_defaults, split_off_extrinsic_parameters
 from dingo.gw.transforms import (
@@ -447,12 +454,29 @@ class HyperInjection(object):
                 {"model": "path/to/main_network.pt"}, # non-gnpe
             ]
         """
-        self.models = model.models
+        self.model = model
         self.parameters_min_max = parameters_min_max
         self.p_det = p_det
 
+        self.hyper_parameter_names = []
+        for model in self.model.models:
+            if inspect.isclass(model):
+                if hasattr(model, "primary_model"):
+                    hyper_parameter_names = inspect.getfullargspec(model.primary_model)[0][1:]
+
+                    # NOTE TEMP hardcoded for now
+                    hyper_parameter_names.insert(-1, "delta_m")
+                elif hasattr(model, "variable_names"):
+                    hyper_parameter_names = model.variable_names
+            else:
+                hyper_parameter_names = inspect.getfullargspec(model)[0][1:]
+            # if starts with "dataset" key, then the model uses a dict input
+            # otherwise it expects an arraylike input
+            self.hyper_parameter_names.append(hyper_parameter_names)
+
         self.model_filepath_list = model_filepath_list
-        self.prior_list = []
+        self.network_prior_list = []
+        self.inference_parameters = []
         for d in model_filepath_list:
             pm = PosteriorModel(
                 device="cuda",
@@ -469,15 +493,53 @@ class HyperInjection(object):
                 if k in pm.metadata["dataset_settings"]["intrinsic_prior"].keys()
             }
 
+            # add inferrable parameters to inference parameters
+            self.inference_parameters.append(
+                pm.metadata["train_settings"]["data"]["inference_parameters"]
+            )
+
             # check if any default priors are set in the intrinsic prior
             extrinsic_prior = get_extrinsic_prior_dict(
                 pm.metadata["train_settings"]["data"]["extrinsic_prior"]
             )
             prior = BBHPriorDict({**intrinsic_prior, **extrinsic_prior})
 
-            self.prior_list.append(prior)
+            self.network_prior_list.append(prior)
 
-    def sample_injection_parameters(self, hyper_injection_parameters, num_injections):
+        # check all inference parameters of all networks are the same
+        if not all(
+            x == self.inference_parameters[0] for x in self.inference_parameters
+        ):
+            raise ValueError("All networks must have the same inference parameters.")
+        else:
+            self.inference_parameters = self.inference_parameters[0]
+
+    def find_correct_network_idx(self, sample):
+        """
+        Find the correct network to use for the analysis
+        based off the prior. Will take the network which has
+        the highest log_prior value.
+
+        Parameters
+        ----------
+        sample : dict
+            Dict of parameters
+
+        Returns
+        -------
+        network_idx : int
+            Index of the network to use for the analysis
+        """
+        log_prior = [prior.ln_prob(sample) for prior in self.network_prior_list]
+        network_idx = np.argmax(log_prior)
+        return network_idx
+
+    def sample_injection_parameters(
+        self,
+        hyper_injection_parameters,
+        num_injections,
+        sampling_algorithm="inverse_transform_sampling",
+    ):
         """
         Parameters
         ----------
@@ -494,39 +556,70 @@ class HyperInjection(object):
         num_injections : int
             Number of injections to generate.
 
+        sampling_algorithm : str default="inverse_transform_sampling"
+            Algorithm to use for sampling from the distribution.
+            Currently implemented are "inverse_transform_sampling" and "metropolis_hastings"
+
         Sample injection parameters based on model
 
         """
+        sampling_algorithm = eval(sampling_algorithm)
 
         sampled_parameters = []
-        for i, sub_model in enumerate(self.models):
+        # iterating through models based off the hyper parameters
+        # sampling the sub parameters
+        for i, sub_model in enumerate(self.model.models):
             partial_prob = partial(sub_model, **hyper_injection_parameters[i])
 
+            # redefine the target density to accept numeric types
+            # NOTE consider profiling this and moving it if it takes a long time
+            param_names = list(self.parameters_min_max[i].keys())
+
+            # if expecting a dict input, then we need to redefine the target density
+            def target_density(*args):
+                return partial_prob({param_names[j]: args[j] for j in range(len(args))})
+
+            # grid to sample over
+            sub_parameters_grid = [
+                jnp.linspace(
+                    self.parameters_min_max[i][param_name][0],
+                    self.parameters_min_max[i][param_name][1],
+                    1000,
+                )
+                for param_name in param_names
+            ]
+
             sampled_parameters.append(
-                metropolis_hastings(
-                    partial_prob, self.parameters_min_max[i], num_samples=num_injections
+                pd.DataFrame(
+                    sampling_algorithm(
+                        target_density, sub_parameters_grid, num_samples=num_injections
+                    ),
+                    columns=param_names,
                 )
             )
 
-        self.injection_samples = pd.concat(sampled_parameters, axis=1)
+        injection_samples = pd.concat(sampled_parameters, axis=1)
 
         # Every population model may not parametrize the all the parameters
         # of a waveform model. For example, a population model may only parametrize
         # the chirp_mass, but we still need to choose the right ascension
         # to generate an injection. This function will randomly sample missing
         # parameters from the prior.
-        self.injection_samples = fill_missing_available_parameters(
-            self.injection_samples
-        )
+        injection_samples = fill_missing_available_parameters(injection_samples)
 
         # filling in other parameters by sampling from the prior
-        prior_samples = pd.DataFrame(self.prior_list[0].sample(size=num_injections))
-        missing_keys = list(
-            set(prior_samples.keys()) - set(self.injection_samples.keys())
+        prior_samples = pd.DataFrame(
+            self.network_prior_list[0].sample(size=num_injections)
         )
+        missing_keys = list(set(prior_samples.keys()) - set(injection_samples.keys()))
         injection_samples = pd.concat(
-            [self.injection_samples, prior_samples[missing_keys]], axis=1
+            [injection_samples, prior_samples[missing_keys]], axis=1
         )
+        injection_samples = fill_missing_available_parameters(injection_samples)
+        
+        # note that masses currently are in the source frame, but to do 
+        # injections we need to convert to the detector frame
+        injection_samples = source_frame_masses_to_detector_frame_masses(injection_samples)
 
         return injection_samples
 
@@ -539,30 +632,66 @@ class HyperInjection(object):
         injection_samples : pd.DataFrame
             Samples of the injection parameters.
         """
-        if not hasattr(self, "injection_samples"):
-            raise ValueError("Must sample injection parameters first.")
-
         sampled_p_det = self.p_det(injection_samples)
         random_samples = np.random.uniform(0, 1, len(sampled_p_det))
-        selection_mask = random_samples < sampled_p_det
+        selection_mask = np.array(random_samples < sampled_p_det)
 
         return injection_samples[selection_mask]
 
-    def generate_hyper_injection_yamls(self):
+    def generate_hyper_injection_inis(
+        self, injection_samples, out_folder, dingo_pipe_kwargs={}
+    ):
         """
         Based on the available networks, create a
-        set of asimov analyses.
-        """
-        pass
+        set of dingo pip analyses
 
-    def asimov_submit_hyper_injection_yamls(self):
+        Parameters
+        ----------
+        injection_samples : pd.DataFrame
+            Samples of the injection parameters.
+        out_folder : str
+            Folder to save the injection .ini files and
+            dingo pipe runs.
         """
-        Based on the available networks, create a
-        set of asimov analyses.
-        """
-        pass
+        # subsetting the passed parameters to be ones compatible
+        # with the network and the prior
+        # NOTE temp phase marginalization
 
-    def generate_hyper_injection(self, hyper_injection_parameters, num_injections):
+        dingo_pipe_settings = default_dingo_pipe_config.copy()
+        dingo_pipe_settings.update(dingo_pipe_kwargs)
+
+        # making the directories to save the injection .ini files
+        os.makedirs(out_folder, exist_ok=True)
+
+        for i, injection_sample in injection_samples.iterrows():
+            # subsetting the passed parameters to be ones compatible
+            sub_sample = injection_sample[
+                [*self.inference_parameters, "phase"]
+            ].to_dict()
+
+            dingo_pipe_settings["outdir"] = os.path.join(out_folder, str(i))
+            dingo_pipe_settings["injection-dict"] = sub_sample
+            dingo_pipe_settings["label"] = f"injection_{i}"
+
+            network_dict = self.model_filepath_list[
+                self.find_correct_network_idx(sub_sample)
+            ]
+            dingo_pipe_settings.update(network_dict)
+
+            # save the .ini file
+            with open(os.path.join(out_folder, f"injection_{i}.ini"), "w+") as f:
+                for k, v in dingo_pipe_settings.items():
+                    f.write(f"{k}={v}\n")
+
+
+    def generate_hyper_injection(
+        self,
+        hyper_injection_parameters,
+        num_injections,
+        out_folder,
+        dingo_pipe_kwargs={},
+        submit=False
+    ):
         """
         Parameters
         ----------
@@ -580,26 +709,49 @@ class HyperInjection(object):
         num_injections : int
             Number of injections to generate.
 
+        out_folder : str
+            Folder to save the injection .ini files and
+            dingo pipe runs.
+
+        dingo_pipe_kwargs : dict default=None
+            Dictionary of dingo pipe parameters to be used for the analysis.
+            This will update the default_dingo_pipe_config.
+
+        submit : bool default=False
+            Whether to submit the injection dags to the cluster.
+
         Based on the available networks, create a
-        set of asimov analyses. The pipeline is
+        set of dingo pipe analyses. The pipeline is
 
         1). Sample injection parameters
         2). Fill in missing parameters
         3). Apply selection criteria
-        4). Instantiate the asimov class
-        5). Generate hyper injection yamls
-        6). Submit hyper injection yamls
-        7). Start the asimov run
+        4). Generate injection .ini files
+        6). Submit injection .ini files
         """
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+        os.chdir(out_folder)
 
-        injection_samples = self.sample_injection_parameters(
-            hyper_injection_parameters=hyper_injection_parameters,
-            num_injections=num_injections,
+        selected_injection_samples = pd.DataFrame([])
+        while len(selected_injection_samples) < num_injections:
+            # generating more injection samples than we need in case 
+            # some are rejected
+            injection_samples = self.sample_injection_parameters(
+                hyper_injection_parameters=hyper_injection_parameters,
+                num_injections=num_injections * 50,
+            )
+            tmp_selected_injection_samples = self.apply_selection_criteria(injection_samples)
+            sub_samples = tmp_selected_injection_samples.sample(num_injections - len(selected_injection_samples), replace=False)
+            selected_injection_samples = pd.concat([selected_injection_samples, sub_samples])
+
+        self.generate_hyper_injection_inis(
+            selected_injection_samples, out_folder, dingo_pipe_kwargs=dingo_pipe_kwargs
         )
-        selected_injection_samples = self.apply_selection_criteria(injection_samples)
-        self.generate_hyper_injection_yamls()
-        self.asimov_submit_hyper_injection_yamls()
-
+        if submit:
+            submit_hyper_injection_inis(out_folder)
+        else:
+            print("Injections ini's in ", out_folder)
 
 def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     """
@@ -614,7 +766,7 @@ def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     min_max : dict
     """
 
-    burnin_size = 100
+    burnin_size = 500_000
     size = burnin_size + num_samples
 
     # defining the initial point as the midpoint of the min-max
@@ -646,3 +798,142 @@ def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     print(target_density, "Acceptance rate: ", num_accepted_samples / size)
     samples = pd.concat(samples[burnin_size:], ignore_index=True)
     return samples
+
+
+def inverse_transform_sampling(target_density, grids, num_samples):
+    """
+    Inverse transform sampling algorithm for sampling over the
+    hyper probability.
+
+    TODO remove for loops
+
+    Parameters
+    ----------
+    prob_function : function(float) -> float
+        The probability function to be sampled over.
+
+    grids : list[jnp.ndarray]
+        List of grids to integrate the cdf over
+
+    num_samples : int
+        Number of samples to generate.
+    """
+    key1 = jax.random.PRNGKey(0)
+    key2 = jax.random.PRNGKey(1)
+
+    if len(grids) == 1:
+        grid = grids[0]
+        # redefining the target density to be a jax compatible function
+
+        # generate the CDF
+        cdf = jnp.cumsum(target_density(grid))
+        cdf = cdf / cdf[-1]
+
+        # Invert the CDF using a numerical root-finding method
+        def inverse_cdf(u):
+            idx = jnp.argmin(jnp.abs(cdf - u))
+            return grid[idx]
+
+        # Generate uniform random samples
+        uniform_samples = jax.random.uniform(key1, shape=(num_samples,))
+        inverse_cdf_vectorized = jax.vmap(inverse_cdf)
+        samples = inverse_cdf_vectorized(uniform_samples)
+
+        return samples
+
+    elif len(grids) == 2:
+        grid1, grid2 = grids
+        # 1). generate the marginal distribution of var 2
+        # this is done by iterating over the matrix row-wise
+        # [ [(x1, y1), (x2, y2), ...] ]
+        # [ [(x2, y1), (x2, y2), ...] ]
+        # and taking the target density of each point
+        # NOTE you don't need a loop here I think
+        X, Y = jnp.meshgrid(grid1, grid2, indexing='ij')
+        density_values = target_density(X, Y)
+        marginal_density = jnp.sum(density_values, axis=0)
+
+        # getting rid of potential infinities
+        inf_mask = jnp.isinf(marginal_density)
+        max_value = jnp.max(jnp.where(inf_mask, -jnp.inf, marginal_density))
+        marginal_density = jnp.where(inf_mask, max_value, marginal_density)
+        # normalize marginal density
+
+        # 2). Generate marginal CDF
+        marginal_cdf = jnp.cumsum(marginal_density)[:-1]
+        marginal_cdf = marginal_cdf / marginal_cdf[-1]
+
+        # 3). sample from the marginal CDF
+        uniform_samples = jax.random.uniform(key1, shape=(num_samples,))
+        idx2 = jnp.argmin(jnp.abs(marginal_cdf - uniform_samples[:, None]), axis=1)
+        var2_samples = grid2[idx2]
+
+        # 4). generate the conditional distribution of var 1 given var 2
+        # For each var 2 sample, we generate the conditional density
+        # this is \int_0_{X} p(x, y) / p(y) dx
+        # [ p(x | y1), p(x | y2), ...]
+        conditional_densities = density_values / marginal_density
+        conditional_density = jnp.array([conditional_densities[:, idx] for idx in idx2])
+
+        # 5). generate the conditional CDF of var 1 given var 2
+        conditional_cdfs = jnp.cumsum(conditional_density, axis=1)
+        conditional_cdfs = conditional_cdfs / conditional_cdfs[:, -1, None]
+
+        # 6). sample from the conditional CDF
+        uniform_samples = jax.random.uniform(key2, shape=(num_samples,))
+        idx1 = jnp.argmin(jnp.abs(conditional_cdfs - uniform_samples[:, None]), axis=1)
+        var1_samples = grid1[idx1]
+
+        return jnp.stack([var1_samples, var2_samples], axis=1)
+
+    return samples
+
+def submit_hyper_injection_inis(out_folder):
+    """
+    Run dingo_pipe and submit the dags
+    """
+
+    # running dingo_pipe
+    for ini_file in os.listdir(out_folder):
+        if ini_file.endswith(".ini"):
+            os.system(f"dingo_pipe {os.path.join(out_folder, ini_file)}")
+
+    # submitting the dag
+    env = {}
+    env.update(os.environ)
+    for root, _, files in os.walk(out_folder):
+        for file in files:
+            if file.startswith("dag"):
+                dag_fpath = os.path.join(root, file)
+                command = ["condor_submit_dag", dag_fpath]
+                output = subprocess.check_output(command, env=env)
+
+default_dingo_pipe_config = {
+    "local": False,
+    "accounting": "dingo",
+    "request-cpus-importance-sampling": 32,
+    "n-parallel": 20,
+    "request-memory": 120,
+    "request-memory-generation": 8.0,
+    "request-disk": 0.5,
+    "sampling-requirements": "[TARGET.CUDAGlobalMemoryMb>20000]",
+    "extra-lines": "[getenv=True]",
+    "simple-submission": False,
+    "model_init": "model_init.pt",
+    "model": "model.pt",
+    "device": "cuda",
+    "num-gnpe-iterations": 30,
+    "num-samples": 50_000,
+    "batch-size": 50_000,
+    "recover-log-prob": True,
+    "trigger-time": 1267963151.3,
+    "shift-segment-for-psd-generation-if-nan": True,
+    "label": "GW150914",
+    "outdir": "./outdir_GW150914",
+    "channel-dict": {"H1": "GWOSC", "L1": "GWOSC"},
+    "psd-length": 128,
+    "plot-corner": True,
+    "plot-weights": True,
+    "plot-log-probs": True,
+    "local-generation": True,
+}

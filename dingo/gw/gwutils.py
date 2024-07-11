@@ -6,6 +6,7 @@ from bilby.gw.detector import PowerSpectralDensity
 from dingo.gw.prior import default_extrinsic_dict, default_intrinsic_dict
 from dingo.gw.prior import BBHExtrinsicPriorDict
 from pesummary.gw.conversions import convert
+from astropy import cosmology, units
 
 
 def get_window(window_kwargs):
@@ -175,6 +176,60 @@ def fill_missing_available_parameters(df):
     if "mass_2" not in df.keys() and "mass_ratio" in df.keys() and "mass_1" in df.keys():
         df["mass_2"] = df["mass_1"] * df["mass_ratio"]
 
-    df = convert(df.to_dict(orient='list')).to_pandas()
+    if "mass_ratio" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
+        df["mass_ratio"] = df["mass_2"] / df["mass_1"]
+
+    if "chirp_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
+        df["chirp_mass"] = (df["mass_1"] * df["mass_2"])**0.6 / (df["mass_1"] + df["mass_2"])**0.2
+
+    if "total_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
+        df["total_mass"] = df["mass_1"] + df["mass_2"]
+
+    for i in [1, 2]:
+        if f"chi_{i}" not in df.keys() and "tilt_{i}" not in df.keys():
+            # NOTE This is not very realistic because it assumes that all spins 
+            # are aligned (as opposed to also anti-aligned) w/ the orbital angular momentum
+            df[f"chi_{i}"] = df[f"a_{i}"]
+        elif f"chi_{i}" in df.keys():
+            pass
+        else:
+            raise NotImplementedError("Only aligned-spins currently supported")
+
+    if "chi_eff" not in df.keys() and "chi_1" in df.keys() and "chi_2" in df.keys():
+        df["chi_eff"] = (df["chi_1"] * df["mass_1"]) + (df["chi_2"] * df["mass_2"]) / df["total_mass"]
+
+    luminosity_distances = np.linspace(1, 20000, 1000)
+    redshifts = np.array(
+        [
+            cosmology.z_at_value(cosmology.Planck15.luminosity_distance, dl * units.Mpc)
+            for dl in luminosity_distances
+        ]
+    )
+    if "redshift" in df.keys() and "luminosity_distance" not in df.keys():
+        z_to_dl = interp1d(redshifts, luminosity_distances)
+        df["luminosity_distance"] = z_to_dl(df["redshift"])
+    elif "redshift" not in df.keys() and "luminosity_distance" in df.keys():
+        dl_to_z = interp1d(luminosity_distances, redshifts)
+        df["redshift"] = dl_to_z(df["luminosity_distance"])
+    elif "redshift" in df.keys() and "luminosity_distance" in df.keys():
+        raise ValueError("Cannot sample both redshift and luminosity_distance in the dataframe.")
+
 
     return df 
+
+
+def source_frame_masses_to_detector_frame_masses(df):
+    """
+    This function will take a dataframe of samples in the source frame, 
+    and convert them to the detector frame. 
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe of samples in the source frame.  
+    """
+    for mass_key in ["mass_1", "mass_2", "total_mass", "chirp_mass"]:
+        if mass_key in df.keys():
+            df[mass_key] = df[mass_key] * (1 + df["redshift"])
+    
+    return df

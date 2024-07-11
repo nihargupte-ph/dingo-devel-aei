@@ -278,7 +278,6 @@ class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
             ],
         )
 
-        # print(self.log_Zn, kappa2, -1 / 2 * rho2opt)
         return self.log_Zn + kappa2 - 1 / 2.0 * rho2opt
 
     def log_likelihood_phase_grid(self, theta, phases=None):
