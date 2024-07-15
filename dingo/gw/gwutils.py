@@ -211,8 +211,6 @@ def fill_missing_available_parameters(df):
     elif "redshift" not in df.keys() and "luminosity_distance" in df.keys():
         dl_to_z = interp1d(luminosity_distances, redshifts)
         df["redshift"] = dl_to_z(df["luminosity_distance"])
-    elif "redshift" in df.keys() and "luminosity_distance" in df.keys():
-        raise ValueError("Cannot sample both redshift and luminosity_distance in the dataframe.")
 
 
     return df 

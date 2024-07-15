@@ -1189,6 +1189,12 @@ def create_parser(top_level=True):
     #     help="Turns on waveform error catching",
     # )
     # waveform_parser.add(
+    #     "--catch-waveform-errors",
+    #     default=True,
+    #     action=StoreBoolean,
+    #     help="Turns on waveform error catching",
+    # )
+    # waveform_parser.add(
     #     "--pn-spin-order",
     #     default=-1,
     #     type=int,

@@ -428,8 +428,8 @@ class HyperInjection(object):
         self,
         model,
         parameters_min_max,
-        p_det,
         model_filepath_list,
+        p_det = None,
     ):
         """
         Parameters
@@ -441,11 +441,6 @@ class HyperInjection(object):
             This is used in the metropolis-hasting
             for when sampling over the hyper likelihood.
 
-        p_det : function
-            Function which takes in a set of parameters as a dict
-            or dataframe as an input and returns the the probability
-            of detecting a signal with those parameters.
-
         model_filepath_list : list[dict]
             List of filepaths to the networks to be used in the analysis.
             For example,
@@ -453,10 +448,18 @@ class HyperInjection(object):
                 {"model": "path/to/main_network.pt", "model_init": "path/to/init_network.pt"}, # gnpe
                 {"model": "path/to/main_network.pt"}, # non-gnpe
             ]
+
+        p_det : function (optional)
+            Function which takes in a set of parameters as a dict
+            or dataframe as an input and returns the the probability
+            of detecting a signal with those parameters.
         """
         self.model = model
         self.parameters_min_max = parameters_min_max
-        self.p_det = p_det
+        if p_det is None:
+            self.p_det = lambda x: 1.0
+        else:
+            self.p_det = p_det
 
         self.hyper_parameter_names = []
         for model in self.model.models:
