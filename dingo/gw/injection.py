@@ -427,7 +427,7 @@ class HyperInjection(object):
     def __init__(
         self,
         model,
-        parameters_min_max,
+        parameter_grids,
         model_filepath_list,
         p_det = None,
     ):
@@ -436,10 +436,9 @@ class HyperInjection(object):
         ----------
         model : gwpopulation.experimental.jax.NonCachingModel
 
-        parameters_min_max : dict
-            Dictionary of parameter names and their min and max values.
-            This is used in the metropolis-hasting
-            for when sampling over the hyper likelihood.
+        parameters_grids : dict
+            Dictionary of parameter names and a grid 
+            over which we will sample the parameters. 
 
         model_filepath_list : list[dict]
             List of filepaths to the networks to be used in the analysis.
@@ -455,9 +454,9 @@ class HyperInjection(object):
             of detecting a signal with those parameters.
         """
         self.model = model
-        self.parameters_min_max = parameters_min_max
+        self.parameter_grids = parameter_grids
         if p_det is None:
-            self.p_det = lambda x: 1.0
+            self.p_det = lambda x: np.ones(len(x))
         else:
             self.p_det = p_det
 
@@ -575,8 +574,7 @@ class HyperInjection(object):
             partial_prob = partial(sub_model, **hyper_injection_parameters[i])
 
             # redefine the target density to accept numeric types
-            # NOTE consider profiling this and moving it if it takes a long time
-            param_names = list(self.parameters_min_max[i].keys())
+            param_names = list(self.parameter_grids[i].keys())
 
             # if expecting a dict input, then we need to redefine the target density
             def target_density(*args):
@@ -584,11 +582,7 @@ class HyperInjection(object):
 
             # grid to sample over
             sub_parameters_grid = [
-                jnp.linspace(
-                    self.parameters_min_max[i][param_name][0],
-                    self.parameters_min_max[i][param_name][1],
-                    1000,
-                )
+                self.parameter_grids[i][param_name]
                 for param_name in param_names
             ]
 
@@ -607,7 +601,9 @@ class HyperInjection(object):
         # of a waveform model. For example, a population model may only parametrize
         # the chirp_mass, but we still need to choose the right ascension
         # to generate an injection. This function will randomly sample missing
-        # parameters from the prior.
+        # parameters from the prior. This is marginalized over when doing the 
+        # hierarchicial inference
+        # First get any parameters which can be derived from the already sampled parameters
         injection_samples = fill_missing_available_parameters(injection_samples)
 
         # filling in other parameters by sampling from the prior
@@ -618,6 +614,7 @@ class HyperInjection(object):
         injection_samples = pd.concat(
             [injection_samples, prior_samples[missing_keys]], axis=1
         )
+        # call this again to fill in any missing parameters
         injection_samples = fill_missing_available_parameters(injection_samples)
         
         # note that masses currently are in the source frame, but to do 
@@ -686,7 +683,6 @@ class HyperInjection(object):
                 for k, v in dingo_pipe_settings.items():
                     f.write(f"{k}={v}\n")
 
-
     def generate_hyper_injection(
         self,
         hyper_injection_parameters,
@@ -747,6 +743,7 @@ class HyperInjection(object):
             tmp_selected_injection_samples = self.apply_selection_criteria(injection_samples)
             sub_samples = tmp_selected_injection_samples.sample(num_injections - len(selected_injection_samples), replace=False)
             selected_injection_samples = pd.concat([selected_injection_samples, sub_samples])
+        selected_injection_samples = selected_injection_samples.head(num_injections)
 
         self.generate_hyper_injection_inis(
             selected_injection_samples, out_folder, dingo_pipe_kwargs=dingo_pipe_kwargs
@@ -802,7 +799,6 @@ def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     samples = pd.concat(samples[burnin_size:], ignore_index=True)
     return samples
 
-
 def inverse_transform_sampling(target_density, grids, num_samples):
     """
     Inverse transform sampling algorithm for sampling over the
@@ -826,21 +822,16 @@ def inverse_transform_sampling(target_density, grids, num_samples):
 
     if len(grids) == 1:
         grid = grids[0]
-        # redefining the target density to be a jax compatible function
-
         # generate the CDF
-        cdf = jnp.cumsum(target_density(grid))
+        cdf = jnp.cumsum(target_density(grid)[:-1] * np.diff(grid))
         cdf = cdf / cdf[-1]
-
-        # Invert the CDF using a numerical root-finding method
-        def inverse_cdf(u):
-            idx = jnp.argmin(jnp.abs(cdf - u))
-            return grid[idx]
 
         # Generate uniform random samples
         uniform_samples = jax.random.uniform(key1, shape=(num_samples,))
-        inverse_cdf_vectorized = jax.vmap(inverse_cdf)
-        samples = inverse_cdf_vectorized(uniform_samples)
+
+        # invert the cdf
+        idx = jnp.argmin(jnp.abs(cdf - uniform_samples[:, None]), axis=1)
+        samples = grid[idx]
 
         return samples
 
