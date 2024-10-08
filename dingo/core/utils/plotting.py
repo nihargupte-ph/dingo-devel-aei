@@ -8,7 +8,11 @@ import pandas as pd
 
 
 def plot_corner_multi(
-    samples, weights=None, labels=None, filename="corner.pdf", colors=None, **kwargs
+    samples,
+    weights=None,
+    labels=None,
+    filename: str = "corner.pdf",
+    **kwargs,
 ):
     """
     Generate a corner plot for multiple posteriors.
@@ -24,8 +28,12 @@ def plot_corner_multi(
         Labels for the posteriors.
     filename : str
         Where to save samples.
-    **kwargs :
-        Forwarded to corner.corner.
+
+    Other Parameters
+    ----------------
+    legend_font_size: int
+        Font size used in legend. Defaults to 50.
+    Also contains additional parameters forwarded to corner.corner.
     """
     # Define plot properties
     corner_params = {
@@ -63,9 +71,6 @@ def plot_corner_multi(
 
     handles = []
     for i, (s, w, l) in enumerate(zip_longest(samples, weights, labels)):
-        corner_params["hist_kwargs"]["color"] = (
-            colors[i] if colors is not None else None
-        )
         corner_params["hist_kwargs"]["linestyle"] = (
             kwargs["linestyles"][i] if "linestyles" in list(kwargs.keys()) else "-"
         )
@@ -74,14 +79,13 @@ def plot_corner_multi(
             labels=common_parameters,
             weights=w,
             no_fill_contours=True,
-            color=colors[i] if colors is not None else None,
+            fig=fig,
             **corner_params,
         )
         handles.append(
             plt.Line2D(
                 [],
                 [],
-                color=colors[i] if colors is not None else None,
                 label=l,
                 linewidth=5,
                 markersize=20,
@@ -98,7 +102,7 @@ def plot_corner_multi(
     fig.legend(
         handles=handles,
         loc="upper right",
-        fontsize=70,
+        fontsize=kwargs.get("legend_font_size", 50),
         labelcolor="linecolor",
     )
 
