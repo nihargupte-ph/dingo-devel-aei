@@ -173,31 +173,25 @@ class WaveformGenerator:
         parameters = parameters.copy()
         parameters["f_ref"] = self.f_ref
 
+        parameters_generator = self._convert_parameters(parameters, self.lal_params)
+
         # Generate GW polarizations
         if isinstance(self.domain, FrequencyDomain):
             wf_generator = self.generate_FD_waveform
-            # Convert to lalsimulation parameters according to the specified domain
-            parameters_lal = self._convert_parameters_to_lal_frame(
-                parameters, self.lal_params, lal_target_function="SimInspiralFD"
-            )
         elif isinstance(self.domain, TimeDomain):
             wf_generator = self.generate_TD_waveform
-            # Convert to lalsimulation parameters according to the specified domain
-            parameters_lal = self._convert_parameters_to_lal_frame(
-                parameters, self.lal_params, lal_target_function="SimInspiralTD"
-            )
         else:
             raise ValueError(f"Unsupported domain type {type(self.domain)}.")
 
         try:
-            wf_dict = wf_generator(parameters_lal)
+            wf_dict = wf_generator(parameters_generator)
         except Exception as e:
             if not catch_waveform_errors:
                 raise
             else:
                 warnings.warn(
                     f"Evaluating the waveform failed with error: {e}\n"
-                    f"The parameters were {parameters_lal}\n"
+                    f"The parameters were {parameters_generator}\n"
                 )
                 pol_nan = np.ones(len(self.domain), dtype=complex) * np.nan
                 wf_dict = {"h_plus": pol_nan, "h_cross": pol_nan}
@@ -230,7 +224,7 @@ class WaveformGenerator:
         else:
             return x
 
-    def _convert_parameters_to_lal_frame(
+    def _convert_parameters(
         self,
         parameter_dict: Dict,
         lal_params=None,
@@ -318,6 +312,14 @@ class WaveformGenerator:
         masses = (p["mass_1"], p["mass_2"])
         r = p["luminosity_distance"]
         phase = p["phase"]
+
+        if "eccentricity" and "log10_eccentricity" in parameter_dict:
+            raise ValueError(
+                "Both eccentricity and log10_eccentricity are present in the parameter_dict"
+            )
+        if "log10_eccentricity" in parameter_dict:
+            parameter_dict["eccentricity"] = np.power(10, parameter_dict["log10_eccentricity"])
+
         ecc_params = (
             0.0,
             parameter_dict.get("eccentricity", 0.0),
@@ -765,7 +767,7 @@ class WaveformGenerator:
                     or self.approximant_str == "NRsur7dq4"
                 ):
                     if self.approximant_str == "SEOBNRv4HM":
-                        parameters_lal, iota = self._convert_parameters_to_lal_frame(
+                        parameters_lal, iota = self._convert_parameters(
                             {**parameters, "f_ref": self.f_ref},
                             lal_target_function="SimIMRSpinAlignedEOBModes",
                         )
@@ -777,7 +779,7 @@ class WaveformGenerator:
                         )
 
                     elif self.approximant_str == "NRsur7dq4":
-                        parameters_lal, iota = self._convert_parameters_to_lal_frame(
+                        parameters_lal, iota = self._convert_parameters(
                             {**parameters, "f_ref": self.f_ref},
                             lal_target_function="SimInspiralChooseTDModes",
                         )
@@ -915,7 +917,7 @@ class WaveformGenerator:
         if self.approximant in [52, 109, 92, 93, 94]:
             # Precessing Spins
             if self.approximant in [52, 92, 93]:
-                parameters_lal_td_modes, iota = self._convert_parameters_to_lal_frame(
+                parameters_lal_td_modes, iota = self._convert_parameters(
                     {**parameters, "f_ref": self.f_ref},
                     lal_target_function="SimInspiralChooseTDModes",
                 )
@@ -927,7 +929,7 @@ class WaveformGenerator:
                     (
                         parameters_lal_td_modes,
                         iota,
-                    ) = self._convert_parameters_to_lal_frame(
+                    ) = self._convert_parameters(
                         {**parameters, "f_ref": self.f_ref},
                         lal_target_function="SimIMRSpinAlignedEOBModesEcc_opt1",
                     )
@@ -941,7 +943,7 @@ class WaveformGenerator:
                     (
                         parameters_lal_td_modes,
                         iota,
-                    ) = self._convert_parameters_to_lal_frame(
+                    ) = self._convert_parameters(
                         {**parameters, "f_ref": self.f_ref},
                         lal_target_function="SimIMRSpinAlignedEOBModes",
                     )
@@ -1026,7 +1028,6 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
         globals()['gws_wfm'] = waveform
         globals()["new_interface_get_waveform_generator"] = gwsignal_get_waveform_generator 
 
-
         self.mode_list = kwargs.get("mode_list", None)
 
     def _convert_parameters(
@@ -1075,6 +1076,9 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
             f_min = self.f_start
         else:
             f_min = self.domain.f_min
+            # for SEOBNRv5EHM, the starting frequency must be the same as the reference frequency
+            if self.approximant_str == "SEOBNRv5EHM":
+                f_min = self.f_ref
         # parameters needed for TD waveforms
         delta_t = 0.5 / self.domain.f_max
 
@@ -1098,6 +1102,26 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
             "ModeArray": self.mode_list,
             "condition": 1,
         }
+
+        # SEOBNRv5EHM doesn't support setting a reference frequency, it is the
+        # same as the starting frequency
+        if self.approximant_str == "SEOBNRv5EHM":
+            # eccentric parameters
+            if "log10_eccentricity" in p and "eccentricity" in p:
+                raise ValueError("Cannot specify both log10_eccentricity and eccentricity")
+
+            if "log10_eccentricity" in p:
+                eccentricity = np.power(10, p["log10_eccentricity"])
+            else:
+                eccentricity = p.get("eccentricity", 0.0)
+            longitude_ascending_nodes = p.get("long_asc_nodes", 0.0)
+            mean_per_ano = p.get("mean_anomaly", 0.0)
+
+            params_gwsignal.update({
+                'eccentricity' : eccentricity * u.dimensionless_unscaled,
+                'longAscNodes' : longitude_ascending_nodes * u.rad,
+                'meanPerAno' : mean_per_ano * u.rad,
+            })
 
         # SEOBNRv5 specific parameters
         if "postadiabatic" in p:
@@ -1284,6 +1308,7 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
                 # Step 2: Transform modes to target domain.
                 hlm_fd = wfg_utils.td_modes_to_fd_modes(hlm_td, self.domain)
             else:
+                # For SEOBNRv5EHM, we don't use the extra time conditioning
                 # assert LS.SimInspiralImplementedTDApproximants(self.approximant)
                 # Step 1: generate waveform modes in L0 frame in native domain of
                 # approximant (here: TD)
@@ -1403,6 +1428,7 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
         """
         # TD approximants that are implemented in L0 frame. Currently tested for:
         #   52: SEOBNRv4PHM
+        #   ??: SEOBNRv5EHM
 
         parameters_gwsignal = self._convert_parameters(
             {**parameters, "f_ref": self.f_ref}
@@ -1451,7 +1477,7 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
         iota: float
         """
         # TD approximants that are implemented in L0 frame. Currently tested for:
-        # SEOBNRv5HM and SEOBNRv5PHM
+        # SEOBNRv5HM, SEOBNRv5PHM
 
         parameters_gwsignal = self._convert_parameters(
             {**parameters, "f_ref": self.f_ref}

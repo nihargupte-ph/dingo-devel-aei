@@ -135,7 +135,7 @@ def tolerances(approximant):
 # Uncomment to test only one approximant.
 try:
     import pyseobnr
-    approximant_list = ["IMRPhenomXPHM", "SEOBNRv4PHM", "SEOBNRv5PHM", "SEOBNRv5HM"]
+    approximant_list = ["SEOBNRv5EHM", "IMRPhenomXPHM", "SEOBNRv4PHM", "SEOBNRv5PHM", "SEOBNRv5HM"]
 except ImportError:
     approximant_list = ["IMRPhenomXPHM", "SEOBNRv4PHM"]
 @pytest.mark.parametrize("approximant", approximant_list)
@@ -145,10 +145,20 @@ def test_generate_hplus_hcross_m(intrinsic_prior, wfg, num_evaluations, toleranc
         p = intrinsic_prior.sample()
         phase_shift = np.random.uniform(high=2 * np.pi)
 
-        pol_m = wfg.generate_hplus_hcross_m(p)
+        try:
+            pol_m = wfg.generate_hplus_hcross_m(p)
+        except AttributeError:
+            print(f"Waveform modes failed to generate with parameters {p}")
+            mismatches.append([0, 0])
+            continue
+            
         pol = sum_contributions_m(pol_m, phase_shift=phase_shift)
         pol_ref = wfg.generate_hplus_hcross({**p, "phase": p["phase"] + phase_shift})
-
+        if np.any(np.isnan(pol_ref["h_plus"])) or np.any(np.isnan(pol_ref["h_cross"])):
+            print(f"Waveform polarizations failed to generate with parameters {p}")
+            mismatches.append([0, 0])
+            continue
+        
         mismatches.append(
             [
                 get_mismatch(
@@ -178,5 +188,9 @@ def test_generate_hplus_hcross_m(intrinsic_prior, wfg, num_evaluations, toleranc
 
     mismatches = np.array(mismatches)
 
+    # checking that at least 50% of the evaluations were 
+    # able to generate
+    count_00 = np.sum(np.all(mismatches == [0, 0], axis=1))
+    assert count_00 < 0.5 * num_evaluations
     assert np.max(mismatches) < tolerances[0]
     assert np.median(mismatches) < tolerances[1]

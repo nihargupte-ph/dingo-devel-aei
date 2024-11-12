@@ -199,6 +199,7 @@ class DataGenerationInput(BilbyDataGenerationInput):
         """Generate injection consistent with trained dingo model"""
         # loading posterior model for which we want to generate injections
         pm = PosteriorModel(model_filename=args.model, device="cpu")
+
         injection_generator = Injection.from_posterior_model_metadata(pm.metadata)
         injection_generator.t_ref = self.trigger_time
         injection_generator._initialize_transform()
@@ -251,6 +252,7 @@ class DataGenerationInput(BilbyDataGenerationInput):
 
         # allowing for changing waveform approximant injection
         if args.injection_waveform_approximant is not None:
+            logger.info(f"Changing injection approximant to {args.injection_waveform_approximant}")
             injection_generator.waveform_generator.approximant = (
                 LS.GetApproximantFromString(args.injection_waveform_approximant)
             )

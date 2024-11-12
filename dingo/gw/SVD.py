@@ -95,12 +95,12 @@ class SVDBasis(DingoDataset):
         verbose : bool
             Whether to print summary statistics.
         """
-        if len(data) != len(parameters):
-            raise ValueError(
-                f"Incompatible data: len(data) == {len(data)} and len("
-                f"parameters) == {len(parameters)} do not match."
-            )
         if parameters is not None:
+            if len(data) != len(parameters):
+                raise ValueError(
+                    f"Incompatible data: len(data) == {len(data)} and len("
+                    f"parameters) == {len(parameters)} do not match."
+                )
             self.mismatches = parameters.copy()
         else:
             self.mismatches = pd.DataFrame()

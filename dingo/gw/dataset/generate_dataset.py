@@ -71,6 +71,8 @@ def generate_parameters_and_polarizations_strict(
         num_samples_total += len(parameters)
         num_waveforms_to_generate = num_samples - num_samples_total
         # generating extra waveforms given that we know the failing fraction 
+        if failed_fraction == 0:
+            break
         num_samples_request =  int(num_waveforms_to_generate / failed_fraction)
 
     parameters = parameters.iloc[:num_samples]

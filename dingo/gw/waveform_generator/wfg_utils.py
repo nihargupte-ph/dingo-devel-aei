@@ -70,7 +70,6 @@ def taper_td_modes_in_place(hlm_td, tapering_flag: int = 1):
         window = get_tapering_window_for_complex_time_series(h, tapering_flag)
         h.data.data *= window
 
-
 def td_modes_to_fd_modes(hlm_td, domain):
     """
     Transform dict of td modes to dict of fd modes via FFT. The td modes are expected
