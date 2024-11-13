@@ -212,6 +212,9 @@ def fill_missing_available_parameters(df):
         dl_to_z = interp1d(luminosity_distances, redshifts)
         df["redshift"] = dl_to_z(df["luminosity_distance"])
 
+    if "log10_eccentricity" in df.keys():
+        df["eccentricity"] = 10**df["log10_eccentricity"]
+        del df["log10_eccentricity"]
 
     return df 
 

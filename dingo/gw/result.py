@@ -580,9 +580,10 @@ class Result(CoreResult):
         ].get("spin_conversion_phase")
 
         # Redefine phase parameter to be consistent with Bilby. COMMENTED BECAUSE SLOW
-        samples = change_spin_conversion_phase(
-            samples, self.f_ref, spin_conversion_phase_old, None
-        )
+        if np.any([var in samples.columns for var in ["phi_jl", "phi_12", "tilt_1", "tilt_2"]]):
+            samples = change_spin_conversion_phase(
+                samples, self.f_ref, spin_conversion_phase_old, None
+            )
 
         return samples
 

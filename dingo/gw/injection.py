@@ -430,6 +430,7 @@ class HyperInjection(object):
         parameter_grids,
         model_filepath_list,
         p_det = None,
+        network_conditions=None
     ):
         """
         Parameters
@@ -452,9 +453,21 @@ class HyperInjection(object):
             Function which takes in a set of parameters as a dict
             or dataframe as an input and returns the the probability
             of detecting a signal with those parameters.
+
+        network_conditions : dict[func[dict] -> bool] (optional)
+            Dictionary of functions which take in a set of parameters
+            as a dict and return a boolean. Each function corresponds to a 
+            function that has been passed in with model_filepath_list. The output
+            of the function determines whether or not to use the network. The functions
+            should be mutually exclusive, that is, two outputs cannot be true at the same 
+            time. 
         """
         self.model = model
         self.parameter_grids = parameter_grids
+        if network_conditions is not None:
+            assert len(network_conditions) == len(model_filepath_list)
+            self.network_conditions = network_conditions    
+            
         if p_det is None:
             self.p_det = lambda x: np.ones(len(x))
         else:
@@ -512,7 +525,9 @@ class HyperInjection(object):
         if not all(
             x == self.inference_parameters[0] for x in self.inference_parameters
         ):
-            raise ValueError("All networks must have the same inference parameters.")
+            print(f"""Warning, inference parameters are not the same for all networks. Defaulting
+                  to {self.inference_parameters[0]}""")
+            self.inference_parameters = self.inference_parameters[0]
         else:
             self.inference_parameters = self.inference_parameters[0]
 
@@ -532,8 +547,12 @@ class HyperInjection(object):
         network_idx : int
             Index of the network to use for the analysis
         """
-        log_prior = [prior.ln_prob(sample) for prior in self.network_prior_list]
-        network_idx = np.argmax(log_prior)
+        if hasattr(self, "network_conditions"):
+            network_idx = np.where([condition(sample) for condition in self.network_conditions])[0][0]
+        else:
+            log_prior = [prior.ln_prob(sample) for prior in self.network_prior_list]
+            network_idx = np.argmax(log_prior)
+            
         return network_idx
 
     def sample_injection_parameters(
@@ -643,7 +662,8 @@ class HyperInjection(object):
     ):
         """
         Based on the available networks, create a
-        set of dingo pip analyses
+        set of dingo pipe analyses. Will dynamically adjust the 
+        used networks based on the provided criteria.
 
         Parameters
         ----------
@@ -655,7 +675,6 @@ class HyperInjection(object):
         """
         # subsetting the passed parameters to be ones compatible
         # with the network and the prior
-        # NOTE temp phase marginalization
 
         dingo_pipe_settings = default_dingo_pipe_config.copy()
         dingo_pipe_settings.update(dingo_pipe_kwargs)
@@ -752,6 +771,8 @@ class HyperInjection(object):
             submit_hyper_injection_inis(out_folder)
         else:
             print("Injections ini's in ", out_folder)
+        
+        return selected_injection_samples
 
 def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     """
@@ -930,4 +951,5 @@ default_dingo_pipe_config = {
     "plot-weights": True,
     "plot-log-probs": True,
     "local-generation": True,
+    "environment-variables": {"NO_GETCONF":True}
 }

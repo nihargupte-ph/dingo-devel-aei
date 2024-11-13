@@ -176,6 +176,7 @@ def change_spin_conversion_phase(samples, f_ref, sc_phase_old, sc_phase_new):
     phase_old = sc_phase_old
     phase_new = sc_phase_new
     samples_new = {}
+    samples.reset_index(inplace=True)
     for idx, sample in samples.to_dict(orient="index").items():
         try:
             if sc_phase_old is None:
