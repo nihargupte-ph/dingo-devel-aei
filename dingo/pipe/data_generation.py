@@ -8,6 +8,7 @@ from bilby_pipe.main import parse_args
 from bilby_pipe.utils import logger, convert_string_to_dict
 from bilby_pipe.data_generation import DataGenerationInput as BilbyDataGenerationInput
 import numpy as np
+from bilby.gw.detector.psd import PowerSpectralDensity
 
 from dingo.gw.data.event_dataset import EventDataset
 from dingo.gw.domains import FrequencyDomain
