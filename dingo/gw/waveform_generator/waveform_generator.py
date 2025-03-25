@@ -1099,9 +1099,12 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
             "phi_ref": p["phase"] * u.rad,
             "distance": p["luminosity_distance"] * u.Mpc,
             "inclination": iota * u.rad,
-            "ModeArray": self.mode_list,
+            # "ModeArray": self.mode_list,
             "condition": 1,
         }
+        
+        if self.mode_list is not None:
+            params_gwsignal["ModeArray"] = self.mode_list
 
         # SEOBNRv5EHM doesn't support setting a reference frequency, it is the
         # same as the starting frequency
@@ -1133,7 +1136,8 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
         if "lmax_nyquist" in p:
             params_gwsignal["lmax_nyquist"] = p["lmax_nyquist"]
         else:
-            params_gwsignal["lmax_nyquist"] = 2
+            if not "ROM" in self.approximant_str:
+                params_gwsignal["lmax_nyquist"] = 2
 
         return params_gwsignal
 

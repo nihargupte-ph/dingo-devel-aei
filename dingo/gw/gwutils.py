@@ -5,6 +5,7 @@ from bilby.gw.detector import PowerSpectralDensity
 
 from dingo.gw.prior import default_extrinsic_dict, default_intrinsic_dict
 from dingo.gw.prior import BBHExtrinsicPriorDict
+from bilby.gw.conversion import chirp_mass_and_mass_ratio_to_component_masses
 from pesummary.gw.conversions import convert
 from astropy import cosmology, units
 
@@ -172,15 +173,18 @@ def fill_missing_available_parameters(df):
     df : pd.DataFrame
         Dataframe of samples with missing parameters.  
     """
-    # if mass_2 not available obtain it first
-    if "mass_2" not in df.keys() and "mass_ratio" in df.keys() and "mass_1" in df.keys():
-        df["mass_2"] = df["mass_1"] * df["mass_ratio"]
+    if "mass_1" in df.keys():
+        if "mass_2" not in df.keys() and "mass_ratio" in df.keys():
+            df["mass_2"] = df["mass_1"] * df["mass_ratio"]
+        elif "mass_ratio" not in df.keys() and "mass_2" in df.keys():
+            df["mass_ratio"] = df["mass_2"] / df["mass_1"]
 
-    if "mass_ratio" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
-        df["mass_ratio"] = df["mass_2"] / df["mass_1"]
-
-    if "chirp_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
-        df["chirp_mass"] = (df["mass_1"] * df["mass_2"])**0.6 / (df["mass_1"] + df["mass_2"])**0.2
+        if "chirp_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
+            df["chirp_mass"] = (df["mass_1"] * df["mass_2"])**0.6 / (df["mass_1"] + df["mass_2"])**0.2
+    else:
+        if "chirp_mass" in df.keys() and "mass_ratio" in df.keys():
+            df["mass_1"], df["mass_2"] = chirp_mass_and_mass_ratio_to_component_masses(df["chirp_mass"], df["mass_ratio"])
+    
 
     if "total_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
         df["total_mass"] = df["mass_1"] + df["mass_2"]
@@ -214,7 +218,7 @@ def fill_missing_available_parameters(df):
 
     if "log10_eccentricity" in df.keys():
         df["eccentricity"] = 10**df["log10_eccentricity"]
-        del df["log10_eccentricity"]
+        df["log10_eccentricity"]
 
     return df 
 

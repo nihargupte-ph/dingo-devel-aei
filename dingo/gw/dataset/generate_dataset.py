@@ -29,25 +29,21 @@ def generate_parameters_and_polarizations(
     prior: BBHPriorDict,
     num_samples: int,
     num_processes: int,
-) -> Tuple[pd.DataFrame, Dict[str, np.ndarray]]:
-    """
-    Generate a dataset of waveforms based on parameters drawn from the prior.
-
+) -> Dict[str, np.ndarray]:
+    """ 
+    Given a dataframe, will generate the polarizations for each row in the dataframe.
+    
     Parameters
     ----------
     waveform_generator : WaveformGenerator
-    prior : Prior
-    num_samples : int
+    parameters : pd.DataFrame
     num_processes : int
 
     Returns
-    -------
-    pandas DataFrame of parameters
-    dictionary of numpy arrays corresponding to waveform polarizations
+    ------- 
     """
-    print("Generating dataset of size " + str(num_samples))
-    parameters = pd.DataFrame(prior.sample(num_samples))
 
+    parameters = pd.DataFrame(prior.sample(num_samples))
     if num_processes > 1:
         with threadpool_limits(limits=1, user_api="blas"):
             with Pool(processes=num_processes) as pool:

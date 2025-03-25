@@ -71,6 +71,7 @@ def plot_corner_multi(
 
     handles = []
     for i, (s, w, l) in enumerate(zip_longest(samples, weights, labels)):
+        color = mpl.colors.rgb2hex(plt.get_cmap("Dark2")(i))
         corner_params["hist_kwargs"]["linestyle"] = (
             kwargs["linestyles"][i] if "linestyles" in list(kwargs.keys()) else "-"
         )
@@ -79,7 +80,7 @@ def plot_corner_multi(
             labels=common_parameters,
             weights=w,
             no_fill_contours=True,
-            fig=fig,
+            color=color,
             **corner_params,
         )
         handles.append(
@@ -87,8 +88,9 @@ def plot_corner_multi(
                 [],
                 [],
                 label=l,
+                color=color,
                 linewidth=5,
-                markersize=20,
+                markersize=4,
             )
         )
 
@@ -102,7 +104,7 @@ def plot_corner_multi(
     fig.legend(
         handles=handles,
         loc="upper right",
-        fontsize=kwargs.get("legend_font_size", 50),
+        fontsize=kwargs.get("legend_font_size", 20),
         labelcolor="linecolor",
     )
 

@@ -210,7 +210,7 @@ class GWSignal(object):
         Compute the GW signal for parameters theta. Same as self.signal(theta) method,
         but it does not sum the contributions of the individual modes, and instead
         returns a dict {m: pol_m for m in [-l_max,...,0,...,l_max]} where each
-        contribution pol_m transforms as exp(-1j * m * phase_shift) under phase shifts.
+        contribution pol_m transforms as ejnp(-1j * m * phase_shift) under phase shifts.
 
         Step 1: Generate polarizations
         Step 2: Project polarizations onto detectors;
@@ -435,7 +435,7 @@ class HyperInjection(object):
         """
         Parameters
         ----------
-        model : gwpopulation.experimental.jax.NonCachingModel
+        model : gwpopulation.ejnperimental.jax.NonCachingModel
 
         parameters_grids : dict
             Dictionary of parameter names and a grid 
@@ -486,7 +486,7 @@ class HyperInjection(object):
             else:
                 hyper_parameter_names = inspect.getfullargspec(model)[0][1:]
             # if starts with "dataset" key, then the model uses a dict input
-            # otherwise it expects an arraylike input
+            # otherwise it ejnpects an arraylike input
             self.hyper_parameter_names.append(hyper_parameter_names)
 
         self.model_filepath_list = model_filepath_list
@@ -580,6 +580,7 @@ class HyperInjection(object):
         sampling_algorithm : str default="inverse_transform_sampling"
             Algorithm to use for sampling from the distribution.
             Currently implemented are "inverse_transform_sampling" and "metropolis_hastings"
+        
 
         Sample injection parameters based on model
 
@@ -588,15 +589,16 @@ class HyperInjection(object):
 
         sampled_parameters = []
         # iterating through models based off the hyper parameters
-        # sampling the sub parameters
+        # sampli
+        # ng the sub parameters
         for i, sub_model in enumerate(self.model.models):
             partial_prob = partial(sub_model, **hyper_injection_parameters[i])
 
             # redefine the target density to accept numeric types
             param_names = list(self.parameter_grids[i].keys())
 
-            # if expecting a dict input, then we need to redefine the target density
-            def target_density(*args):
+            # if ejnpecting a dict input, then we need to redefine the target density
+            def target_density(args):
                 return partial_prob({param_names[j]: args[j] for j in range(len(args))})
 
             # grid to sample over
@@ -608,7 +610,7 @@ class HyperInjection(object):
             sampled_parameters.append(
                 pd.DataFrame(
                     sampling_algorithm(
-                        target_density, sub_parameters_grid, num_samples=num_injections
+                        target_density, sub_parameters_grid, num_samples=num_injections 
                     ),
                     columns=param_names,
                 )
@@ -708,7 +710,7 @@ class HyperInjection(object):
         num_injections,
         out_folder,
         dingo_pipe_kwargs={},
-        submit=False
+        submit=False,
     ):
         """
         Parameters
@@ -820,12 +822,11 @@ def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
     samples = pd.concat(samples[burnin_size:], ignore_index=True)
     return samples
 
-def inverse_transform_sampling(target_density, grids, num_samples):
+def inverse_transform_sampling(target_density, grids, num_samples, batch_size=10_000):
+
     """
     Inverse transform sampling algorithm for sampling over the
     hyper probability.
-
-    TODO remove for loops
 
     Parameters
     ----------
@@ -838,70 +839,73 @@ def inverse_transform_sampling(target_density, grids, num_samples):
     num_samples : int
         Number of samples to generate.
     """
-    key1 = jax.random.PRNGKey(0)
-    key2 = jax.random.PRNGKey(1)
 
+    key1 = jax.random.PRNGKey(np.random.randint(0, 1e6))
+    key2 = jax.random.PRNGKey(np.random.randint(0, 1e6))
+
+    # JIT compile the target density function
+    # jit_target_density = jax.jit(target_density) # doesn't work for all gwpop functions for some
+    # reason
+    
     if len(grids) == 1:
         grid = grids[0]
-        # generate the CDF
-        cdf = jnp.cumsum(target_density(grid)[:-1] * np.diff(grid))
+        grid = jax.device_put(grid)
+        cdf = jnp.cumsum(target_density([grid])[:-1] * jnp.diff(grid))
         cdf = cdf / cdf[-1]
-
-        # Generate uniform random samples
         uniform_samples = jax.random.uniform(key1, shape=(num_samples,))
-
-        # invert the cdf
         idx = jnp.argmin(jnp.abs(cdf - uniform_samples[:, None]), axis=1)
-        samples = grid[idx]
-
-        return samples
-
+        return grid[idx]
+    
     elif len(grids) == 2:
+        # Step 1: Compute the p(x, y) on a grid
         grid1, grid2 = grids
-        # 1). generate the marginal distribution of var 2
-        # this is done by iterating over the matrix row-wise
-        # [ [(x1, y1), (x2, y2), ...] ]
-        # [ [(x2, y1), (x2, y2), ...] ]
-        # and taking the target density of each point
-        # NOTE you don't need a loop here I think
+        grid1, grid2 = jax.device_put(grid1), jax.device_put(grid2)
         X, Y = jnp.meshgrid(grid1, grid2, indexing='ij')
-        density_values = target_density(X, Y)
+
+        # Flatten the meshgrid to prepare for batching
+        X_flat, Y_flat = X.ravel(), Y.ravel()
+        points = jnp.stack([X_flat, Y_flat], axis=-1)
+
+        # Compute densities in blocks
+        density_values_flat = jax.lax.map(target_density, points, batch_size=batch_size)
+
+        # Reshape back to grid shape
+        density_values = density_values_flat.reshape(X.shape)
+
+        # Step 2: marginalize over x to compute p(y)
+        # compute the marginal density for each sample
         marginal_density = jnp.sum(density_values, axis=0)
 
-        # getting rid of potential infinities
+        # Handle infinities
         inf_mask = jnp.isinf(marginal_density)
         max_value = jnp.max(jnp.where(inf_mask, -jnp.inf, marginal_density))
         marginal_density = jnp.where(inf_mask, max_value, marginal_density)
-        # normalize marginal density
 
-        # 2). Generate marginal CDF
+        # Step 3: Compute the CDF of c(Y) = \int_0^Y p(y) dy
+        # Compute marginal CDF
         marginal_cdf = jnp.cumsum(marginal_density)[:-1]
         marginal_cdf = marginal_cdf / marginal_cdf[-1]
-
-        # 3). sample from the marginal CDF
+        
+        # sample points from the marginal CDF
         uniform_samples = jax.random.uniform(key1, shape=(num_samples,))
         idx2 = jnp.argmin(jnp.abs(marginal_cdf - uniform_samples[:, None]), axis=1)
         var2_samples = grid2[idx2]
 
-        # 4). generate the conditional distribution of var 1 given var 2
-        # For each var 2 sample, we generate the conditional density
-        # this is \int_0_{X} p(x, y) / p(y) dx
-        # [ p(x | y1), p(x | y2), ...]
+        # Step 4: Compute the conditional CDF of c(X|Y) = \int_0^X p(x|y) dx
+        # Conditional density
         conditional_densities = density_values / marginal_density
-        conditional_density = jnp.array([conditional_densities[:, idx] for idx in idx2])
+        conditional_density = jnp.take(conditional_densities, idx2, axis=1).T
 
-        # 5). generate the conditional CDF of var 1 given var 2
+        # Step 5: Sample from the conditional CDF
+        # Conditional CDF
         conditional_cdfs = jnp.cumsum(conditional_density, axis=1)
         conditional_cdfs = conditional_cdfs / conditional_cdfs[:, -1, None]
 
-        # 6). sample from the conditional CDF
         uniform_samples = jax.random.uniform(key2, shape=(num_samples,))
         idx1 = jnp.argmin(jnp.abs(conditional_cdfs - uniform_samples[:, None]), axis=1)
         var1_samples = grid1[idx1]
 
         return jnp.stack([var1_samples, var2_samples], axis=1)
-
-    return samples
 
 def submit_hyper_injection_inis(out_folder):
     """
