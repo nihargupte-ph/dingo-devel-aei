@@ -161,80 +161,62 @@ def get_standardization_dict(
     }
     return standardization_dict
 
+
 def fill_missing_available_parameters(df):
-    """ 
-    This function will take a dataframe of parameters, and 
-    derive as many missing parameters as possible. For example,
-    if the dataframe has mass_ratio and mass_1, this function 
-    will populate it with chirp_mass and mass_2 as well. 
+    """
+    Fill in missing parameters using available ones in a gravitational wave parameter dataframe.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Dataframe of samples with missing parameters.  
+        Dataframe containing samples with missing parameters.
     """
-    if "mass_1" in df.keys():
-        if "mass_2" not in df.keys() and "mass_ratio" in df.keys():
-            df["mass_2"] = df["mass_1"] * df["mass_ratio"]
-        elif "mass_ratio" not in df.keys() and "mass_2" in df.keys():
-            df["mass_ratio"] = df["mass_2"] / df["mass_1"]
+    def chirp_mass(m1, m2):
+        """Compute chirp mass given two component masses."""
+        return (m1 * m2) ** (3/5) / (m1 + m2) ** (1/5)
 
-        if "chirp_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
-            df["chirp_mass"] = (df["mass_1"] * df["mass_2"])**0.6 / (df["mass_1"] + df["mass_2"])**0.2
-    else:
-        if "chirp_mass" in df.keys() and "mass_ratio" in df.keys():
-            df["mass_1"], df["mass_2"] = chirp_mass_and_mass_ratio_to_component_masses(df["chirp_mass"], df["mass_ratio"])
-    
+    # Compute missing total_mass_src and chirp_mass_src if possible
+    if "mass_1_src" in df and "mass_ratio" in df:
+        df["mass_2_src"] = df.get("mass_2_src", df["mass_1_src"] * df["mass_ratio"])
+    if "mass_1_src" in df and "mass_2_src" in df:
+        df["total_mass_src"] = df.get("total_mass_src", df["mass_1_src"] + df["mass_2_src"])
+        df["chirp_mass_src"] = df.get("chirp_mass_src", chirp_mass(df["mass_1_src"], df["mass_2_src"]))
 
-    if "total_mass" not in df.keys() and "mass_1" in df.keys() and "mass_2" in df.keys():
-        df["total_mass"] = df["mass_1"] + df["mass_2"]
+    # Convert source-frame masses to detector-frame
+    for mass_key in ["mass_1_src", "mass_2_src", "total_mass_src", "chirp_mass_src"]:
+        if mass_key in df:
+            df[mass_key.replace("_src", "")] = df[mass_key] * (1 + df["redshift"])
 
+    # Compute missing mass parameters
+    if "mass_1" in df:
+        df["mass_2"] = df.get("mass_2", df["mass_1"] * df.get("mass_ratio", np.nan))
+        df["mass_ratio"] = df.get("mass_ratio", df["mass_2"] / df["mass_1"])
+        if "chirp_mass" not in df and "mass_2" in df:
+            df["chirp_mass"] = chirp_mass(df["mass_1"], df["mass_2"])
+    elif "chirp_mass" in df and "mass_ratio" in df:
+        df["mass_1"], df["mass_2"] = chirp_mass_and_mass_ratio_to_component_masses(df["chirp_mass"], df["mass_ratio"])
+
+    df["total_mass"] = df.get("total_mass", df["mass_1"] + df["mass_2"])
+
+    # Fill missing chi values
     for i in [1, 2]:
-        if f"chi_{i}" not in df.keys() and "tilt_{i}" not in df.keys():
-            # NOTE This is not very realistic because it assumes that all spins 
-            # are aligned (as opposed to also anti-aligned) w/ the orbital angular momentum
-            df[f"chi_{i}"] = df[f"a_{i}"]
-        elif f"chi_{i}" in df.keys():
-            pass
-        else:
-            raise NotImplementedError("Only aligned-spins currently supported")
+        df[f"chi_{i}"] = df.get(f"chi_{i}", df.get(f"a_{i}", np.nan))
 
-    if "chi_eff" not in df.keys() and "chi_1" in df.keys() and "chi_2" in df.keys():
-        df["chi_eff"] = (df["chi_1"] * df["mass_1"]) + (df["chi_2"] * df["mass_2"]) / df["total_mass"]
+    # Compute effective spin parameter
+    if "chi_eff" not in df and "chi_1" in df and "chi_2" in df:
+        df["chi_eff"] = (df["chi_1"] * df["mass_1"] + df["chi_2"] * df["mass_2"]) / df["total_mass"]
 
+    # Compute luminosity distance from redshift or vice versa
     luminosity_distances = np.linspace(1, 20000, 1000)
-    redshifts = np.array(
-        [
-            cosmology.z_at_value(cosmology.Planck15.luminosity_distance, dl * units.Mpc)
-            for dl in luminosity_distances
-        ]
-    )
-    if "redshift" in df.keys() and "luminosity_distance" not in df.keys():
-        z_to_dl = interp1d(redshifts, luminosity_distances)
-        df["luminosity_distance"] = z_to_dl(df["redshift"])
-    elif "redshift" not in df.keys() and "luminosity_distance" in df.keys():
-        dl_to_z = interp1d(luminosity_distances, redshifts)
-        df["redshift"] = dl_to_z(df["luminosity_distance"])
+    redshifts = np.array([cosmology.z_at_value(cosmology.luminosity_distance, dl * units.Mpc) for dl in luminosity_distances])
+    z_to_dl = interp1d(redshifts, luminosity_distances, fill_value="extrapolate")
+    dl_to_z = interp1d(luminosity_distances, redshifts, fill_value="extrapolate")
 
-    if "log10_eccentricity" in df.keys():
-        df["eccentricity"] = 10**df["log10_eccentricity"]
-        df["log10_eccentricity"]
+    df["luminosity_distance"] = df.get("luminosity_distance", z_to_dl(df["redshift"])) if "redshift" in df else df["luminosity_distance"]
+    df["redshift"] = df.get("redshift", dl_to_z(df["luminosity_distance"])) if "luminosity_distance" in df else df["redshift"]
 
-    return df 
+    # Convert log10 eccentricity to eccentricity
+    if "log10_eccentricity" in df:
+        df["eccentricity"] = 10 ** df["log10_eccentricity"]
 
-
-def source_frame_masses_to_detector_frame_masses(df):
-    """
-    This function will take a dataframe of samples in the source frame, 
-    and convert them to the detector frame. 
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataframe of samples in the source frame.  
-    """
-    for mass_key in ["mass_1", "mass_2", "total_mass", "chirp_mass"]:
-        if mass_key in df.keys():
-            df[mass_key] = df[mass_key] * (1 + df["redshift"])
-    
     return df

@@ -599,7 +599,9 @@ class HyperInjection(object):
 
             # if ejnpecting a dict input, then we need to redefine the target density
             def target_density(args):
-                return partial_prob({param_names[j]: args[j] for j in range(len(args))})
+                # TODO the _src replacement is a hack to get around the fact that 
+                # gwpop models use src frame masses but don't call them mass_1_src for example
+                return partial_prob({param_names[j].replace("_src", ""): args[j] for j in range(len(args))})
 
             # grid to sample over
             sub_parameters_grid = [
@@ -623,7 +625,7 @@ class HyperInjection(object):
         # the chirp_mass, but we still need to choose the right ascension
         # to generate an injection. This function will randomly sample missing
         # parameters from the prior. This is marginalized over when doing the 
-        # hierarchicial inference
+        # hierarchicial inference. 
         # First get any parameters which can be derived from the already sampled parameters
         injection_samples = fill_missing_available_parameters(injection_samples)
 
@@ -635,13 +637,11 @@ class HyperInjection(object):
         injection_samples = pd.concat(
             [injection_samples, prior_samples[missing_keys]], axis=1
         )
-        # call this again to fill in any missing parameters
+
+        # call this again to fill in any missing parameters that come from 
+        # sampling from the prior
         injection_samples = fill_missing_available_parameters(injection_samples)
         
-        # note that masses currently are in the source frame, but to do 
-        # injections we need to convert to the detector frame
-        injection_samples = source_frame_masses_to_detector_frame_masses(injection_samples)
-
         return injection_samples
 
     def apply_selection_criteria(self, injection_samples):
