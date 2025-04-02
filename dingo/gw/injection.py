@@ -21,7 +21,6 @@ from dingo.gw.gwutils import (
     get_extrinsic_prior_dict,
     get_intrinsic_prior_dict,
     fill_missing_available_parameters,
-    source_frame_masses_to_detector_frame_masses
 )
 from dingo.gw.prior import build_prior_with_defaults, split_off_extrinsic_parameters
 from dingo.gw.transforms import (
