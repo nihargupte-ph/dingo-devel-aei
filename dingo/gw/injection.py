@@ -707,7 +707,7 @@ class HyperInjection(object):
         self,
         hyper_injection_parameters,
         num_injections,
-        out_folder,
+        out_folder=None,
         dingo_pipe_kwargs={},
         submit=False,
     ):
@@ -737,7 +737,8 @@ class HyperInjection(object):
             This will update the default_dingo_pipe_config.
 
         submit : bool default=False
-            Whether to submit the injection dags to the cluster.
+            Whether to generate the hyper injection inis
+            and submit the injection dags to the cluster.
 
         Based on the available networks, create a
         set of dingo pipe analyses. The pipeline is
@@ -747,10 +748,15 @@ class HyperInjection(object):
         3). Apply selection criteria
         4). Generate injection .ini files
         6). Submit injection .ini files
+
+        Returns 
+        -------
+        injection_samples : pd.DataFrame
+            Samples of the injection parameters that you 
+            want to analyze
         """
-        if not os.path.exists(out_folder):
-            os.makedirs(out_folder)
-        os.chdir(out_folder)
+        if out_folder is None and submit:
+            raise ValueError("You must provide an out_folder if you want to submit the injections.")
 
         selected_injection_samples = pd.DataFrame([])
         while len(selected_injection_samples) < num_injections:
@@ -765,61 +771,17 @@ class HyperInjection(object):
             selected_injection_samples = pd.concat([selected_injection_samples, sub_samples])
         selected_injection_samples = selected_injection_samples.head(num_injections)
 
-        self.generate_hyper_injection_inis(
-            selected_injection_samples, out_folder, dingo_pipe_kwargs=dingo_pipe_kwargs
-        )
-        if submit:
-            submit_hyper_injection_inis(out_folder)
-        else:
-            print("Injections ini's in ", out_folder)
+        if out_folder is not None:
+            if not os.path.exists(out_folder):
+                os.makedirs(out_folder)
+            os.chdir(out_folder)
+            self.generate_hyper_injection_inis(
+                selected_injection_samples, out_folder, dingo_pipe_kwargs=dingo_pipe_kwargs
+            )
+            if submit:
+                submit_hyper_injection_inis(out_folder)
         
         return selected_injection_samples
-
-def metropolis_hastings(target_density, sub_parameters_min_max, num_samples):
-    """
-    Metropolis-Hastings algorithm for sampling over the
-    hyper probability.
-
-    Parameters
-    ----------
-    prob_function : function
-        The probability function to be sampled over.
-
-    min_max : dict
-    """
-
-    burnin_size = 500_000
-    size = burnin_size + num_samples
-
-    # defining the initial point as the midpoint of the min-max
-    x0 = pd.DataFrame(
-        {k: (b + a) / 2 for k, (a, b) in sub_parameters_min_max.items()}, index=[0]
-    )
-    xt = x0
-    step_size = pd.DataFrame(
-        {k: (b - a) / 50 for k, (a, b) in sub_parameters_min_max.items()}, index=[0]
-    )
-
-    samples = []
-    num_accepted_samples = 0
-    for i in range(size):
-        perturbation = pd.DataFrame(
-            {k: np.random.normal(loc=0, scale=step) for k, step in step_size.items()},
-            index=[0],
-        )
-        xt_candidate = xt + perturbation
-
-        accept_prob = (target_density(xt_candidate)) / (target_density(xt))
-
-        if np.random.uniform(0, 1) < accept_prob.iloc[0]:
-            xt = xt_candidate
-            num_accepted_samples += 1
-
-        samples.append(xt)
-
-    print(target_density, "Acceptance rate: ", num_accepted_samples / size)
-    samples = pd.concat(samples[burnin_size:], ignore_index=True)
-    return samples
 
 def inverse_transform_sampling(target_density, grids, num_samples, batch_size=10_000):
 
