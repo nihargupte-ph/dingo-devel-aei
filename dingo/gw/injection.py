@@ -298,7 +298,6 @@ class GWSignal(object):
             )
         self._asd = asd
 
-
 class Injection(GWSignal):
     """
     Produces injections of signals (with random or specified parameters) into stationary
@@ -418,7 +417,6 @@ class Injection(GWSignal):
             k: float(v) for k, v in theta.items()
         }  # Some parameters are np.float64
         return self.injection(theta)
-
 
 class HyperInjection(object):
     """create a set of asimov injections to analyze"""
@@ -600,7 +598,7 @@ class HyperInjection(object):
             def target_density(args):
                 # TODO the _src replacement is a hack to get around the fact that 
                 # gwpop models use src frame masses but don't call them mass_1_src for example
-                return partial_prob({param_names[j].replace("_src", ""): args[j] for j in range(len(args))})
+                return partial_prob({name.replace("_src", ""): val for name, val in zip(param_names, args)})
 
             # grid to sample over
             sub_parameters_grid = [
@@ -710,6 +708,7 @@ class HyperInjection(object):
         out_folder=None,
         dingo_pipe_kwargs={},
         submit=False,
+        num_extra_injection_factor=5_000
     ):
         """
         Parameters
@@ -739,6 +738,11 @@ class HyperInjection(object):
         submit : bool default=False
             Whether to generate the hyper injection inis
             and submit the injection dags to the cluster.
+            
+        num_extra_injection_factor : int default=1000
+            How many extra injections to generate before applying the 
+            selection criteria. Will call the selection function 
+            in batches so this is useful
 
         Based on the available networks, create a
         set of dingo pipe analyses. The pipeline is
@@ -764,11 +768,12 @@ class HyperInjection(object):
             # some are rejected
             injection_samples = self.sample_injection_parameters(
                 hyper_injection_parameters=hyper_injection_parameters,
-                num_injections=num_injections * 50,
+                num_injections=num_injections * num_extra_injection_factor,
             )
+            print(len(injection_samples))
             tmp_selected_injection_samples = self.apply_selection_criteria(injection_samples)
-            sub_samples = tmp_selected_injection_samples.sample(num_injections - len(selected_injection_samples), replace=False)
-            selected_injection_samples = pd.concat([selected_injection_samples, sub_samples])
+            print(len(tmp_selected_injection_samples))
+            selected_injection_samples = pd.concat([selected_injection_samples, tmp_selected_injection_samples])
         selected_injection_samples = selected_injection_samples.head(num_injections)
 
         if out_folder is not None:
@@ -892,7 +897,7 @@ default_dingo_pipe_config = {
     "local": False,
     "accounting": "dingo",
     "request-cpus-importance-sampling": 32,
-    "n-parallel": 20,
+    "n-parallel": 5,
     "request-memory": 120,
     "request-memory-generation": 8.0,
     "request-disk": 0.5,

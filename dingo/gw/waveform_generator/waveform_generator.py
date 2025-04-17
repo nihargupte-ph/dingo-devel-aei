@@ -1111,7 +1111,11 @@ class NewInterfaceWaveformGenerator(WaveformGenerator):
         if self.approximant_str == "SEOBNRv5EHM":
             # eccentric parameters
             if "log10_eccentricity" in p and "eccentricity" in p:
-                raise ValueError("Cannot specify both log10_eccentricity and eccentricity")
+                if (10 ** p["log10_eccentricity"] - p["eccentricity"]) > 1e-4:
+                    raise ValueError(
+                        f"""log10_eccentricity of {p['log10_eccentricity']} and eccentricity 
+                        of {p['eccentricity']} are inconsistent, check your input values"""
+                    )
 
             if "log10_eccentricity" in p:
                 eccentricity = np.power(10, p["log10_eccentricity"])

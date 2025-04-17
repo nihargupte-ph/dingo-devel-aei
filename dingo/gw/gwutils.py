@@ -6,8 +6,8 @@ from bilby.gw.detector import PowerSpectralDensity
 from dingo.gw.prior import default_extrinsic_dict, default_intrinsic_dict
 from dingo.gw.prior import BBHExtrinsicPriorDict
 from bilby.gw.conversion import chirp_mass_and_mass_ratio_to_component_masses
-from pesummary.gw.conversions import convert
 from astropy import cosmology, units
+from astropy.cosmology import Planck18
 
 
 def get_window(window_kwargs):
@@ -208,7 +208,7 @@ def fill_missing_available_parameters(df):
 
     # Compute luminosity distance from redshift or vice versa
     luminosity_distances = np.linspace(1, 20000, 1000)
-    redshifts = np.array([cosmology.z_at_value(cosmology.luminosity_distance, dl * units.Mpc) for dl in luminosity_distances])
+    redshifts = np.array([cosmology.z_at_value(Planck18.luminosity_distance, dl * units.Mpc) for dl in luminosity_distances])
     z_to_dl = interp1d(redshifts, luminosity_distances, fill_value="extrapolate")
     dl_to_z = interp1d(luminosity_distances, redshifts, fill_value="extrapolate")
 
