@@ -11,7 +11,7 @@ import numpy as np
 from bilby.gw.detector.psd import PowerSpectralDensity
 
 from dingo.gw.data.event_dataset import EventDataset
-from dingo.gw.domains import FrequencyDomain
+from dingo.gw.domains import UniformFrequencyDomain
 from dingo.pipe.parser import create_parser
 from dingo.gw.injection import Injection
 from dingo.core.models import PosteriorModel
