@@ -9,6 +9,7 @@ from bilby_pipe.input import Input
 from bilby_pipe.utils import parse_args, logger, convert_string_to_dict
 
 from dingo.gw.data.event_dataset import EventDataset
+from dingo.gw.domains import MultibandedFrequencyDomain
 from dingo.pipe.default_settings import IMPORTANCE_SAMPLING_SETTINGS
 from dingo.pipe.parser import create_parser
 from dingo.gw.result import Result
@@ -86,6 +87,7 @@ class ImportanceSamplingInput(Input):
         self.spline_calibration_nodes = args.spline_calibration_nodes
         self.spline_calibration_envelope_dict = args.spline_calibration_envelope_dict
         self.spline_calibration_curves = args.spline_calibration_curves
+        self.calibration_correction_type = args.calibration_correction_type
 
         # # Marginalization
         # self.distance_marginalization = args.distance_marginalization
@@ -117,6 +119,7 @@ class ImportanceSamplingInput(Input):
                 "calibration_envelope": self.spline_calibration_envelope_dict,
                 "num_calibration_nodes": self.spline_calibration_nodes,
                 "num_calibration_curves": self.spline_calibration_curves,
+                "correction_type": self.calibration_correction_type,
             }
         elif self.calibration_model == None:
             return None
@@ -139,6 +142,11 @@ class ImportanceSamplingInput(Input):
         else:
             self._importance_sampling_settings = dict()
 
+        if isinstance(self.result.domain, MultibandedFrequencyDomain):
+            self._importance_sampling_settings.update(
+                IMPORTANCE_SAMPLING_SETTINGS["MultibandingDefault"]
+            )
+
         if settings is not None:
             if settings.lower() == "default":
                 pass
@@ -154,6 +162,21 @@ class ImportanceSamplingInput(Input):
             self._importance_sampling_settings = dict()
 
     def run_sampler(self):
+        self.result.use_base_domain = self.importance_sampling_settings.get(
+            "use_base_domain", False
+        )
+
+        if self.prior_dict:
+            logger.info("Updating prior from network prior. Changes:")
+            logger.info(
+                yaml.dump(
+                    self.prior_dict,
+                    default_flow_style=False,
+                    sort_keys=False,
+                )
+            )
+            self.result.update_prior(self.prior_dict)
+
         if "synthetic_phase" in self.importance_sampling_settings:
             logger.info("Sampling synthetic phase.")
             synthetic_phase_kwargs = {
@@ -173,16 +196,6 @@ class ImportanceSamplingInput(Input):
             calibration_marginalization_kwargs=self.calibration_marginalization_kwargs,
         )
 
-        if self.prior_dict:
-            logger.info("Updating prior from network prior. Changes:")
-            logger.info(
-                yaml.dump(
-                    self.prior_dict,
-                    default_flow_style=False,
-                    sort_keys=False,
-                )
-            )
-            self.result.update_prior(self.prior_dict)
 
         self.result.print_summary()
         self.result.to_file(os.path.join(self.result_directory, self.label + ".hdf5"))
