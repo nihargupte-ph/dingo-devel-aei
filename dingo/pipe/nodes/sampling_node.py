@@ -43,7 +43,7 @@ class SamplingNode(AnalysisNode):
 
         if self.inputs.transfer_files or self.inputs.osg:
             input_files_to_transfer = [
-                str(generation_node.event_data_file),
+                str(generation_node.event_data_files), 
                 str(self.inputs.complete_ini_file),
             ]
             if self.inputs.osg:

@@ -2,11 +2,8 @@ import argparse
 import copy
 import textwrap
 from multiprocessing import Pool
-<<<<<<< HEAD
-=======
 from pathlib import Path
 from typing import Dict, Tuple
->>>>>>> main
 from functools import partial
 
 import numpy as np
@@ -27,10 +24,7 @@ from dingo.gw.waveform_generator import (
     generate_waveforms_parallel,
 )
 from dingo.core.utils.misc import call_func_strict_output_dim
-<<<<<<< HEAD
 from dingo.gw.SVD import SVDBasis, ApplySVD
-=======
->>>>>>> main
 
 def generate_parameters_and_polarizations(
     waveform_generator: WaveformGenerator,

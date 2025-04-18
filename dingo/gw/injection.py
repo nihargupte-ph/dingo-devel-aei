@@ -29,7 +29,7 @@ from dingo.gw.waveform_generator.waveform_generator import (
     WaveformGenerator,
     NewInterfaceWaveformGenerator,
 )
-from dingo.core.models import PosteriorModel
+from dingo.core.posterior_models import NormalizingFlowPosteriorModel
 
 
 class GWSignal(object):
@@ -961,5 +961,6 @@ default_dingo_pipe_config = {
     "plot-weights": True,
     "plot-log-probs": True,
     "local-generation": True,
-    "environment-variables": {"NO_GETCONF":True}
+    "transfer-files": True,
+    "environment-variables": {"NO_GETCONF":True},
 }
