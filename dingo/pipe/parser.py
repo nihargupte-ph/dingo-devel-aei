@@ -194,26 +194,27 @@ def create_parser(top_level=True):
             "a segement which contains no Nans."
         ),
     )
-    data_gen_pars.add(
-        "--gps-tuple",
-        type=nonestr,
-        help=(
-            "Tuple of the (start, step, number) of GPS start times. For"
-            " example, (10, 1, 3) produces the gps start times [10, 11, 12]."
-            " If given, gps-file is ignored."
-        ),
-        default=None,
-    )
-    data_gen_pars.add(
-        "--gps-file",
-        type=nonestr,
-        help=(
-            "File containing segment GPS start times. This can be a multi-"
-            "column file if (a) it is comma-separated and (b) the zeroth "
-            "column contains the gps-times to use"
-        ),
-        default=None,
-    )
+    #
+    # data_gen_pars.add(
+    #     "--gps-tuple",
+    #     type=nonestr,
+    #     help=(
+    #         "Tuple of the (start, step, number) of GPS start times. For"
+    #         " example, (10, 1, 3) produces the gps start times [10, 11, 12]."
+    #         " If given, gps-file is ignored."
+    #     ),
+    #     default=None,
+    # )
+    # data_gen_pars.add(
+    #     "--gps-file",
+    #     type=nonestr,
+    #     help=(
+    #         "File containing segment GPS start times. This can be a multi-"
+    #         "column file if (a) it is comma-separated and (b) the zeroth "
+    #         "column contains the gps-times to use"
+    #     ),
+    #     default=None,
+    # )
     data_gen_pars.add(
         "--timeslide-file",
         type=nonestr,
@@ -311,14 +312,14 @@ def create_parser(top_level=True):
     )
     # data_type_pars = data_gen_pars.add_mutually_exclusive_group()
     # data_type_pars.add(
-    #     "--gaussian-noise",
-    #     action="store_true",
-    #     help="If true, use simulated Gaussian noise",
+        # "--gaussian-noise",
+        # action="store_true",
+        # help="If true, use simulated Gaussian noise",
     # )
     # data_gen_pars.add(
-        # "--zero-noise",
-        # action="store_true",
-        # help="Use a zero noise realisation",
+    # "--zero-noise",
+    # action="store_true",
+    # help="Use a zero noise realisation",
     # )
 
     det_parser = parser.add_argument_group(
@@ -504,16 +505,16 @@ def create_parser(top_level=True):
         help="random seed to use when generating noise realization(s) from PSD",
     )
     # injection_parser.add(
-        # "--injection-numbers",
-        # action="append",
-        # type=nonestr,
-        # default=None,
-        # help=(
-            # "Specific injections rows to use from the injection_file, e.g. "
-            # "`injection_numbers=[0,3] selects the zeroth and third row. Can be "
-            # "a list of slice-syntax values, e.g, [0, 2:4] will produce [0, 2, 3]. "
-            # "Repeated entries will be ignored."
-        # ),
+    # "--injection-numbers",
+    # action="append",
+    # type=nonestr,
+    # default=None,
+    # help=(
+    # "Specific injections rows to use from the injection_file, e.g. "
+    # "`injection_numbers=[0,3] selects the zeroth and third row. Can be "
+    # "a list of slice-syntax values, e.g, [0, 2:4] will produce [0, 2, 3]. "
+    # "Repeated entries will be ignored."
+    # ),
     # )
     injection_parser.add(
         "--injection-waveform-approximant",
@@ -524,17 +525,24 @@ def create_parser(top_level=True):
         "training will be used. Allowed waveform approximants are those implemented"
         "in lalsimulation",
     )
-    injection_parser.add(
+
+    injection_parser_noise_input = injection_parser.add_mutually_exclusive_group()
+    injection_parser_noise_input.add(
         "--zero-noise",
         action="store_true",
-        help="Use a zero noise realisation",
+        help="Use a zero noise realisation for the injection",
+    )
+    injection_parser_noise_input.add(
+        "--gaussian-noise",
+        action="store_true",
+        help="Use a gaussian noise realisation for the injection",
     )
     injection_parser.add(
         "--num-noise-realizations",
         type=int,
         default=100,
         help="When using zero noise, the number of noise realisations to average over."
-        "This is the number of dingo proposals to average over before importance sampling."
+        "This is the number of dingo proposals to average over before importance sampling.",
     )
 
     # injection_parser.add(

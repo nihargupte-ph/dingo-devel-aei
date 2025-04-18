@@ -39,23 +39,18 @@ class SamplingInput(Input):
         self.result_format = args.result_format
 
         # Event files to run on
-        if isinstance(args.event_data_files, list):
-            self.event_data_files = args.event_data_files
-        else:
-            self.event_data_files = args.event_data_files[0].split()
+        self.event_data_file = args.event_data_file
 
         # Choices for running
         self.detectors = args.detectors
-
-        # if running on the OSG, the network has been transferred to
-        # the local directory, replace osdf string
-        if args.osg:
-            self.model = os.path.basename(args.model)
-            self.model_init = os.path.basename(args.model_init)
-        else:
-            self.model = args.model
-            self.model_init = args.model_init
+        self.model = args.model
+        self.model_init = args.model_init
+        self.zero_noise = args.zero_noise
+        self.injection = args.injection_dict is not None
         self.recover_log_prob = args.recover_log_prob
+        if self.zero_noise:
+            self.num_noise_realizations = args.num_noise_realizations
+            self.recover_log_prob = False
         self.device = args.device
         self.num_gnpe_iterations = args.num_gnpe_iterations
         self.num_samples = args.num_samples
@@ -112,14 +107,8 @@ class SamplingInput(Input):
         self._load_sampler()
 
     def _load_event(self):
-        # iterating through event data which will be used for noise averaging
-        self.contexts, self.event_metadatas = [], []
-        for event_data_file in self.event_data_files:
-            event_dataset = EventDataset(file_name=event_data_file)
-            self.contexts.append(event_dataset.data)
-
-        # event metadata is the same
-        self.event_metadata = event_dataset.settings
+        self.context = EventDataset(file_name=self.event_data_file)
+        self.event_metadata = self.context.settings
 
     def _load_sampler(self):
         """Load the sampler and set its context based on event data."""
@@ -186,38 +175,9 @@ class SamplingInput(Input):
     #     return os.path.relpath(result_dir)
 
     def run_sampler(self):
-        # Iterating through all event data files, you will
-        # only have more than one if you are noise averaging
         self.dingo_sampler.event_metadata = self.event_metadata
-        samples_list = []
-        for context in self.contexts:
-            self.dingo_sampler.context = context
-
-            if self.gnpe and self.recover_log_prob and not self.zero_noise:
-                logger.info(
-                    "GNPE network does not provide log probability. Generating "
-                    "samples and training a new network to recover it."
-                )
-
-                # Note that this will not save any low latency samples at present.
-                prepare_log_prob(
-                    self.dingo_sampler,
-                    batch_size=self.batch_size,
-                    **self.density_recovery_settings,
-                )
-
-            # Training unconditional density estimator if zero noise
-            elif self.zero_noise:
-                n_training_samples = 1_000_000
-                self.dingo_sampler.run_sampler(
-                    int(n_training_samples / self.num_noise_realizations),
-                    batch_size=self.batch_size,
-                )
-                samples_list.append(self.dingo_sampler.samples)
-                print(len(samples_list))
-
-        if self.zero_noise:
-            self.dingo_sampler.samples = pd.concat(samples_list)
+        if self.gnpe and self.recover_log_prob and not self.zero_noise:
+            self.dingo_sampler.context = self.context.data
             logger.info(
                 "Training unconditional density estimator on pool of noise realizations"
             )
@@ -228,6 +188,49 @@ class SamplingInput(Input):
             # removing proxies since this makes training the unconditional flow easier
             inference_parameters = [x for x in inference_parameters if "proxy" not in x]
 
+            unconditional_flow = training_result.train_unconditional_flow(
+                inference_parameters,
+                nde_settings=self.density_recovery_settings["nde_settings"],
+            )
+
+            nde_sampler = GWSampler(model=unconditional_flow)
+            nde_sampler.run_sampler(
+                num_samples=self.num_samples, batch_size=self.batch_size
+            )
+            self.dingo_sampler = nde_sampler
+
+        # run the sampler
+        self.dingo_sampler.run_sampler(
+            num_samples=self.num_samples, batch_size=self.batch_size
+        )
+
+        # Training unconditional density estimator if zero noise
+        elif self.zero_noise:
+            n_training_samples = 1_000_000
+            samples_list = []
+            for i in range(self.num_noise_realizations):
+                context = {
+                    "waveform": self.context.data[f"waveform_{i}"],
+                    "asds": self.context.data["asds"]
+                }
+                self.dingo_sampler.context = context
+                self.dingo_sampler.run_sampler(
+                    int(n_training_samples / self.num_noise_realizations),
+                    batch_size=self.batch_size,
+                )
+                samples_list.append(self.dingo_sampler.samples)
+
+            logger.info(
+                "Training unconditional density estimator on pool of noise realizations"
+            )
+            training_result = self.dingo_sampler.to_result()
+            outdir = Path(self.result_directory)
+            training_result.to_file(outdir / "training_samples.hdf5")
+            inference_parameters = list(self.dingo_sampler.samples.columns)
+            # removing proxies since this makes training the unconditional flow easier
+            inference_parameters = [
+                x for x in inference_parameters if "proxy" not in x
+            ]
             unconditional_flow = training_result.train_unconditional_flow(
                 inference_parameters,
                 nde_settings=self.density_recovery_settings["nde_settings"],
