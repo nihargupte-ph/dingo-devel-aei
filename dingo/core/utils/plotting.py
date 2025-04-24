@@ -85,9 +85,9 @@ def plot_corner_multi(
             color=color,
             **corner_params,
         )
-        if truth is not None:
-            truth_list = np.array([truth[c] if c in truth else None for c in common_parameters])
-            corner.overplot_lines(fig, truth_list, c='k')
+        # if truth is not None:
+            # truth_list = np.array([truth[c] if c in truth else None for c in common_parameters])
+            # corner.overplot_lines(fig, truth_list, c='k')
 
         handles.append(
             plt.Line2D(

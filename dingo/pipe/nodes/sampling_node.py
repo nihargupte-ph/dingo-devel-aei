@@ -20,10 +20,9 @@ class SamplingNode(AnalysisNode):
 
         self.setup_arguments()
 
-
         # Add extra arguments for dingo
         self.arguments.add("label", self.label)
-        self.arguments.add("event-data-files", " ".join(generation_node.event_data_files))
+        self.arguments.add("event-data-file", generation_node.event_data_file)
 
         self.extra_lines.extend(self._checkpoint_submit_lines())
         env_vars = []
@@ -43,7 +42,7 @@ class SamplingNode(AnalysisNode):
 
         if self.inputs.transfer_files or self.inputs.osg:
             input_files_to_transfer = [
-                str(generation_node.event_data_files), 
+                str(generation_node.event_data_file), 
                 str(self.inputs.complete_ini_file),
             ]
             if self.inputs.osg:

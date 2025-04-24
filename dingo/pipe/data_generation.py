@@ -383,7 +383,7 @@ class DataGenerationInput(BilbyDataGenerationInput):
             "roll_off": self.tukey_roll_off,
         }
 
-        domain = FrequencyDomain(
+        domain = UniformFrequencyDomain(
             f_min=self.minimum_frequency,
             f_max=self.maximum_frequency,
             delta_f=1 / self.duration,
