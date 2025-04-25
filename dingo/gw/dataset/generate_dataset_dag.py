@@ -47,6 +47,13 @@ def parse_args():
         help="Absolute path to the dingo Python environment. "
         'We will execute scripts in "env_path/bin/".',
     )
+    parser.add_argument(
+        "--transfer-files",
+        type=str,
+        required=False,
+        default=False,
+        help="Whether or not transfer files to the condor worker nodes.",
+    )
 
     # condor arguments
     parser.add_argument("--request_cpus", type=int, default=None, help="CPUs per job.")
@@ -155,7 +162,8 @@ def create_dag(args, settings):
 
     # scripts are installed in the env's bin directory
     path = os.path.join(args.env_path, "bin")
-    temp_dir = args.temp_dir
+    temp_dir = os.path.abspath(args.temp_dir)
+    settings_file = os.path.abspath(args.settings_file)
 
     # DAG ---------------------------------------------------------------------
     dagman = Dagman(name="dingo_generate_dataset_dagman", submit=args.submit)
@@ -247,7 +255,7 @@ def create_dag(args, settings):
         "prefix": os.path.join(temp_dir, dataset_part_prefix),
         "num_parts": args.num_jobs,
         "out_file": args.out_file,
-        "settings_file": args.settings_file,
+        "settings_file": settings_file,
     }
     args_str = create_args_string(args_dict)
     consolidate_dataset = Job(
