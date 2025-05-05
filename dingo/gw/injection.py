@@ -17,7 +17,7 @@ from dingo.gw.domains import (
     MultibandedFrequencyDomain,
 )
 from dingo.gw.domains import build_domain, build_domain_from_model_metadata
-from dingo.gw.gwutils import get_extrinsic_prior_dict
+from dingo.gw.gwutils import get_extrinsic_prior_dict, get_intrinsic_prior_dict, fill_missing_available_parameters
 from dingo.gw.prior import build_prior_with_defaults, split_off_extrinsic_parameters
 from dingo.gw.transforms import (
     GetDetectorTimes,
@@ -530,7 +530,7 @@ class HyperInjection(object):
         self.network_prior_list = []
         self.inference_parameters = []
         for d in model_filepath_list:
-            pm = PosteriorModel(
+            pm = NormalizingFlowPosteriorModel(
                 device="cuda",
                 model_filename=d["model"],
                 load_training_info=True,
@@ -810,9 +810,7 @@ class HyperInjection(object):
                 hyper_injection_parameters=hyper_injection_parameters,
                 num_injections=num_injections * num_extra_injection_factor,
             )
-            print(len(injection_samples))
             tmp_selected_injection_samples = self.apply_selection_criteria(injection_samples)
-            print(len(tmp_selected_injection_samples))
             selected_injection_samples = pd.concat([selected_injection_samples, tmp_selected_injection_samples])
         selected_injection_samples = selected_injection_samples.head(num_injections)
 

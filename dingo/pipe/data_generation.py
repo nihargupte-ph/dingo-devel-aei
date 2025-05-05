@@ -233,7 +233,7 @@ class DataGenerationInput(BilbyDataGenerationInput):
                 for k, v in self.psd_dict.items()
                 if k in [ifo.name for ifo in injection_generator.ifo_list]
             }
-        else:
+        elif args.asd_dataset is not None:
             asd_dataset = ASDDataset(args.asd_dataset)
             randint = np.random.randint(
                 0, [v for v in asd_dataset.length_info.values()][0]

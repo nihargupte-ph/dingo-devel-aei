@@ -179,30 +179,16 @@ class SamplingInput(Input):
         if self.gnpe and self.recover_log_prob and not self.zero_noise:
             self.dingo_sampler.context = self.context.data
             logger.info(
-                "Training unconditional density estimator on pool of noise realizations"
-            )
-            training_result = self.dingo_sampler.to_result()
-            outdir = Path(self.result_directory)
-            training_result.to_file(outdir / "training_samples.hdf5")
-            inference_parameters = list(self.dingo_sampler.samples.columns)
-            # removing proxies since this makes training the unconditional flow easier
-            inference_parameters = [x for x in inference_parameters if "proxy" not in x]
-
-            unconditional_flow = training_result.train_unconditional_flow(
-                inference_parameters,
-                nde_settings=self.density_recovery_settings["nde_settings"],
+                "GNPE network does not provide log probability. Generating "
+                "samples and training a new network to recover it."
             )
 
-            nde_sampler = GWSampler(model=unconditional_flow)
-            nde_sampler.run_sampler(
-                num_samples=self.num_samples, batch_size=self.batch_size
+            # Note that this will not save any low latency samples at present.
+            prepare_log_prob(
+                self.dingo_sampler,
+                batch_size=self.batch_size,
+                **self.density_recovery_settings,
             )
-            self.dingo_sampler = nde_sampler
-
-        # run the sampler
-        self.dingo_sampler.run_sampler(
-            num_samples=self.num_samples, batch_size=self.batch_size
-        )
 
         # Training unconditional density estimator if zero noise
         elif self.zero_noise:

@@ -168,6 +168,9 @@ class Sampler(object):
         samples = self.transform_post({"parameters": y, "log_prob": log_prob})
         result = samples["parameters"]
         result["log_prob"] = samples["log_prob"]
+        # NOTE EDIT 
+        result = {k: v.squeeze() if v.ndim == 2 else v for k, v in result.items()}
+        # NOTE EDIT 
         return result
 
     def run_sampler(
@@ -498,6 +501,10 @@ class GNPESampler(Sampler):
                 else:
                     y, log_prob = self.model.sample_and_log_prob(x["data"])
 
+            # NOTE TEMP 
+            y = y.squeeze() if y.ndim == 3 else y
+            log_prob = log_prob.squeeze() if log_prob.ndim == 2 else log_prob
+            # NOTE TEMP 
             time_sample_end = time.time()
 
             x["parameters"] = y

@@ -162,8 +162,8 @@ def create_dag(args, settings):
 
     # scripts are installed in the env's bin directory
     path = os.path.join(args.env_path, "bin")
-    temp_dir = os.path.abspath(args.temp_dir)
-    settings_file = os.path.abspath(args.settings_file)
+    temp_dir = args.temp_dir
+    settings_file = args.settings_file
 
     # DAG ---------------------------------------------------------------------
     dagman = Dagman(name="dingo_generate_dataset_dagman", submit=args.submit)
@@ -274,10 +274,12 @@ def main():
     args = parse_args()
 
     # Load settings
-    with open(args.settings_file, "r") as f:
+    settings_file = os.path.abspath(args.settings_file)
+    with open(settings_file, "r") as f:
         settings = yaml.safe_load(f)
 
     # create temporary directory
+    args.temp_dir = os.path.abspath(args.temp_dir)
     if not os.path.exists(args.temp_dir):
         os.mkdir(args.temp_dir)
 
